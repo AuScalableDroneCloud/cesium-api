@@ -32,7 +32,7 @@ function processFile(filepath, id, index, originalFilename) {
   return new Promise(function (resolve, reject) {
     fs.renameSync(filepath, filepath + '.laz');
 
-    exec(`conda run -n entwine entwine build -i ${filepath + '.laz'} -o ${path.join(path.dirname(filepath + '.laz'), id, index.toString(), 'ept')}`, (error, stdout, stderr) => {
+    exec(`aws s3 cp ${filepath + '.laz'} s3://appf-anu/Cesium/Uploads/${id}/${index}/${originalFilename}`, (error, stdout, stderr) => {
       if (error) {
         console.error(`exec error: ${error}`);
         reject();
@@ -41,7 +41,7 @@ function processFile(filepath, id, index, originalFilename) {
       console.log(`stdout: ${stdout}`);
       console.error(`stderr: ${stderr}`);
 
-      exec(`conda run -n entwine ept tile ${path.join(path.dirname(filepath + '.laz'), id, index.toString(), 'ept')} --truncate`, (error, stdout, stderr) => {
+      exec(`conda run -n entwine entwine build -i ${filepath + '.laz'} -o ${path.join(path.dirname(filepath + '.laz'), id, index.toString(), 'ept')}`, (error, stdout, stderr) => {
         if (error) {
           console.error(`exec error: ${error}`);
           reject();
@@ -50,7 +50,7 @@ function processFile(filepath, id, index, originalFilename) {
         console.log(`stdout: ${stdout}`);
         console.error(`stderr: ${stderr}`);
 
-        exec(`aws s3 cp ${path.join(path.dirname(filepath + '.laz'), id, index.toString(), 'ept')} s3://appf-anu/Cesium/Uploads/${id}/${index}/ept --recursive --acl public-read`, (error, stdout, stderr) => {
+        exec(`conda run -n entwine ept tile ${path.join(path.dirname(filepath + '.laz'), id, index.toString(), 'ept')} --truncate`, (error, stdout, stderr) => {
           if (error) {
             console.error(`exec error: ${error}`);
             reject();
@@ -59,7 +59,7 @@ function processFile(filepath, id, index, originalFilename) {
           console.log(`stdout: ${stdout}`);
           console.error(`stderr: ${stderr}`);
 
-          exec(`aws s3 cp ${filepath + '.laz'} s3://appf-anu/Cesium/Uploads/${id}/${index}/${originalFilename}`, (error, stdout, stderr) => {
+          exec(`aws s3 cp ${path.join(path.dirname(filepath + '.laz'), id, index.toString(), 'ept')} s3://appf-anu/Cesium/Uploads/${id}/${index}/ept --recursive --acl public-read`, (error, stdout, stderr) => {
             if (error) {
               console.error(`exec error: ${error}`);
               reject();
@@ -80,7 +80,7 @@ function processFile(filepath, id, index, originalFilename) {
 
 
 async function processFiles(files, id, fields) {
-  var promises=[];
+  var promises = [];
 
   if (Array.isArray(files['files[]'])) {
     files['files[]'].map((file, index) => {

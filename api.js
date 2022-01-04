@@ -104,7 +104,6 @@ function processFile(filepath, id, index, originalFilename, log_file) {
         log_file.write(`stderr: ${stderr}`);
 
         exec(`conda run -n entwine ept tile ${path.join(path.dirname(filepath + '.laz'), id, index.toString(), 'ept')} --truncate`, (error, stdout, stderr) => {
-        // exec(`conda run -n entwine ept tile ${path.join(path.dirname(filepath + '.laz'), id, index.toString(), 'ept')}`, (error, stdout, stderr) => {
           if (error) {
             console.error(`exec error: ${error}`);
             log_file.write(`exec error: ${error}`);
@@ -347,7 +346,8 @@ app.post('/upload', function (req, res, next) {
         indexJson.assets.push({
           id: id,
           name: fields.name,
-          status: "processing"
+          status: "processing",
+          categoryID: 6 //Uploads
         })
 
         if (!fs.existsSync(path.join(os.tmpdir(), id.toString()))) {

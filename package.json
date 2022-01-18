@@ -4,6 +4,7 @@
   "description": "",
   "main": "api.js",
   "dependencies": {
+    "archiver": "^5.3.0",
     "aws-sdk": "^2.1041.0",
     "cesium": "^1.88.0",
     "express": "^4.17.1",

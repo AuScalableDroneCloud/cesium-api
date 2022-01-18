@@ -1,7 +1,7 @@
 FROM conda/miniconda3
 ENV DEBIAN_FRONTEND=noninteractive 
 
-RUN conda create -n entwine -c conda-forge entwine
+RUN conda create -n entwine -c conda-forge entwine pdal python-pdal gdal
 
 RUN apt update
 RUN apt upgrade -y

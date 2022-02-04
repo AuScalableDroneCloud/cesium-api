@@ -68,6 +68,7 @@ function updateAsset(asset, id, index, date, originalFilename) {
           lat: carto.latitude * Cesium.Math.DEGREES_PER_RADIAN,
           height: carto.height
         },
+        boundingSphereRadius:tileset.boundingSphere.radius,
         source: {
           url: `s3://appf-anu/Cesium/Uploads/${id}/${index}/${originalFilename}`
         }
@@ -111,7 +112,15 @@ function processFile(filepath, id, index, originalFilename, log_file) {
         log_file.write(`stdout: ${stdout}`);
         log_file.write(`stderr: ${stderr}`);
 
-        exec(`conda run -n entwine ept tile ${path.join(path.dirname(filepath + '.laz'), id, index.toString(), 'ept')} --truncate`, (error, stdout, stderr) => {
+        var eptFilePath = `${path.join(path.dirname(filepath + '.laz'), id, index.toString(), 'ept', 'ept.json')}`;
+        var eptFile = fs.readFileSync(eptFilePath)
+        var ept = JSON.parse(eptFile);
+        var dimensions = "";
+        ept.schema.map(_schema=>{
+          dimensions += _schema.name + " ";
+        })
+
+        exec(`conda run -n entwine ept tile ${path.join(path.dirname(filepath + '.laz'), id, index.toString(), 'ept')} --truncate --dimensions ${dimensions}`, (error, stdout, stderr) => {
           if (error) {
             console.error(`exec error: ${error}`);
             log_file.write(`exec error: ${error}`);

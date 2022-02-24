@@ -50,7 +50,7 @@ async function uploadLogFile(id) {
   );
 }
 
-function updateAsset(asset, id, index, date, originalFilename) {
+function updateAsset(datasets, id, index, date, originalFilename, dataID) {
   return new Promise(function (resolve, reject) {
     var tileset = new Cesium.Cesium3DTileset({
       url: `https://appf-anu.s3.ap-southeast-2.amazonaws.com/Cesium/Uploads/${id}/${index}/ept/ept-tileset/tileset.json`
@@ -59,7 +59,8 @@ function updateAsset(asset, id, index, date, originalFilename) {
     tileset.readyPromise.then((tileset) => {
       var carto = Cesium.Cartographic.fromCartesian(tileset.boundingSphere.center);
 
-      asset.data.push({
+      datasets.push({
+        id: dataID,
         date: date,
         type: "PointCloud",
         url: `https://appf-anu.s3.ap-southeast-2.amazonaws.com/Cesium/Uploads/${id}/${index}/ept/ept-tileset/tileset.json`,
@@ -68,14 +69,14 @@ function updateAsset(asset, id, index, date, originalFilename) {
           lat: carto.latitude * Cesium.Math.DEGREES_PER_RADIAN,
           height: carto.height
         },
-        boundingSphereRadius:tileset.boundingSphere.radius,
+        boundingSphereRadius: tileset.boundingSphere.radius,
         source: {
           url: `s3://appf-anu/Cesium/Uploads/${id}/${index}/${originalFilename}`
         }
       });
 
       tileset = tileset && tileset.destroy();
-      resolve(asset);
+      resolve();
     })
       .otherwise(() => {
         console.log("otherwise");
@@ -116,7 +117,7 @@ function processFile(filepath, id, index, originalFilename, log_file) {
         var eptFile = fs.readFileSync(eptFilePath)
         var ept = JSON.parse(eptFile);
         var dimensions = "";
-        ept.schema.map(_schema=>{
+        ept.schema.map(_schema => {
           dimensions += _schema.name + " ";
         })
 
@@ -202,10 +203,14 @@ async function processFiles(files, id, fields, log_file) {
             var updatePromises = [];
             if (Array.isArray(files['files[]'])) {
               files['files[]'].map((file, index) => {
-                updatePromises.push(updateAsset(asset, id, index, fields.dates[index], originalFilename));
+                dataID = indexJson.datasets[indexJson.datasets.length - 1].id + 1;
+                asset.data.push(dataID);
+                updatePromises.push(updateAsset(indexJson.datasets, id, index, fields.dates[index], originalFilename, dataID));
               })
             } else {
-              updatePromises.push(updateAsset(asset, id, 0, fields.dates[0], originalFilename));
+              dataID = indexJson.datasets[indexJson.datasets.length - 1].id + 1;
+              asset.data.push(dataID);
+              updatePromises.push(updateAsset(indexJson.datasets, id, 0, fields.dates[0], originalFilename, dataID));
             }
 
             Promise.all(updatePromises).then(() => {
@@ -218,8 +223,8 @@ async function processFiles(files, id, fields, log_file) {
 
               promise.then(
                 function (data) {
-                  console.log("Successfully uploading index file with with positions and urls.");
-                  log_file.write("Successfully uploading index file with with positions and urls.");
+                  console.log("Successfully uploaded index file with with positions and urls.");
+                  log_file.write("Successfully uploaded index file with with positions and urls.");
 
                   log_file.end();
 
@@ -261,8 +266,8 @@ async function processFiles(files, id, fields, log_file) {
 
               promise.then(
                 function (data) {
-                  console.log("Successfully uploading index file with status.");
-                  log_file.write("Successfully uploading index file with status.");
+                  console.log("Successfully uploaded index file with status.");
+                  log_file.write("Successfully uploaded index file with status.");
 
                   log_file.end();
 
@@ -287,55 +292,55 @@ async function processFiles(files, id, fields, log_file) {
       });
     })
   })
-  .catch(error => {
-    console.error("There was an error processing files")
-    log_file.write("There was an error processing files");
+    .catch(error => {
+      console.error("There was an error processing files")
+      log_file.write("There was an error processing files");
 
-    https.get("https://appf-anu.s3.ap-southeast-2.amazonaws.com/Cesium/index.json").on('response', function (response) {
-      var body = '';
-      response.on('data', function (chunk) {
-        body += chunk;
-      });
-
-      response.on('end', function () {
-        var indexJson = JSON.parse(body);
-        indexJson.assets.map(asset => {
-          if (asset.id === parseInt(id)) {
-            asset.status = "failed";
-            return;
-          }
-        })
-
-        var upload = new AWS.S3.ManagedUpload({
-          params: { Bucket: bucket, Key: `Cesium/index.json`, Body: Buffer.from(JSON.stringify(indexJson, null, 4)), ACL: 'public-read' }
+      https.get("https://appf-anu.s3.ap-southeast-2.amazonaws.com/Cesium/index.json").on('response', function (response) {
+        var body = '';
+        response.on('data', function (chunk) {
+          body += chunk;
         });
-        var promise = upload.promise();
 
-        promise.then(
-          function (data) {
-            console.log("Successfully uploading index file with status.");
-            log_file.write("Successfully uploading index file with status.");
+        response.on('end', function () {
+          var indexJson = JSON.parse(body);
+          indexJson.assets.map(asset => {
+            if (asset.id === parseInt(id)) {
+              asset.status = "failed";
+              return;
+            }
+          })
 
-            log_file.end();
+          var upload = new AWS.S3.ManagedUpload({
+            params: { Bucket: bucket, Key: `Cesium/index.json`, Body: Buffer.from(JSON.stringify(indexJson, null, 4)), ACL: 'public-read' }
+          });
+          var promise = upload.promise();
 
-            uploadLogFile(id).then(() => {
-              removeIntermediateFiles(files, id);
-            });
-          },
-          function (err) {
-            console.log("There was an error uploading index file with status: ", err.message);
-            log_file.write("There was an error uploading index file with status: ", err.message);
+          promise.then(
+            function (data) {
+              console.log("Successfully uploaded index file with status.");
+              log_file.write("Successfully uploaded index file with status.");
 
-            log_file.end();
+              log_file.end();
 
-            uploadLogFile(id).then(() => {
-              removeIntermediateFiles(files, id);
-            });
-          }
-        );
-      });
+              uploadLogFile(id).then(() => {
+                removeIntermediateFiles(files, id);
+              });
+            },
+            function (err) {
+              console.log("There was an error uploading index file with status: ", err.message);
+              log_file.write("There was an error uploading index file with status: ", err.message);
+
+              log_file.end();
+
+              uploadLogFile(id).then(() => {
+                removeIntermediateFiles(files, id);
+              });
+            }
+          );
+        });
+      })
     })
-  })
 }
 
 const maxFileSize = 2000; //MB
@@ -352,6 +357,7 @@ app.post('/upload', function (req, res, next) {
     }
 
     https.get("https://appf-anu.s3.ap-southeast-2.amazonaws.com/Cesium/index.json").on('response', function (response) {
+      // http.get("http://localhost:8080/cesium/Apps/ASDC/index.json").on('response', function (response) {
       var body = '';
       response.on('data', function (chunk) {
         body += chunk;
@@ -441,7 +447,7 @@ function zipFiles(sources, outputFileName) {
   archive.on('error', error => { throw new Error(`${error.name} ${error.code} ${error.message} ${error.path} ${error.stack}`); });
 
   const streamPassThrough = new stream.PassThrough();
-  
+
   var tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
 
@@ -451,7 +457,7 @@ function zipFiles(sources, outputFileName) {
     Bucket: bucket,
     ContentType: 'application/zip',
     Key: `Cesium/Exports/${outputFileName}.zip`,
-    Expires:tomorrow
+    Expires: tomorrow
   }, error => {
     if (error) {
       console.error(`Got error creating stream to s3 ${error.name} ${error.message} ${error.stack}`);
@@ -468,7 +474,7 @@ function zipFiles(sources, outputFileName) {
     sources.map((source) => {
       var key = source.url.slice(`https://${bucket}.s3.ap-southeast-2.amazonaws.com/`.length, source.url.length)
       var fileName = key.slice(key.lastIndexOf('/') + 1, key.length)
-      archive.append(s3.getObject({ Bucket: bucket, Key: key }).createReadStream(), { name: source.dir? source.dir +'/' + fileName: fileName })
+      archive.append(s3.getObject({ Bucket: bucket, Key: key }).createReadStream(), { name: source.dir ? source.dir + '/' + fileName : fileName })
     })
     archive.finalize();
     s3Upload.promise().then(resolve).catch(reject);
@@ -481,7 +487,7 @@ app.get('/download', function (req, res, next) {
   var dataIndex = parseInt(req.query.dataIndex);
   var format = req.query.format;
   https.get("https://appf-anu.s3.ap-southeast-2.amazonaws.com/Cesium/index.json").on('response', function (response) {
-  // http.get("http://localhost:8080/cesium/Apps/index.json").on('response', function (response) {
+    // http.get("http://localhost:8080/cesium/Apps/index.json").on('response', function (response) {
     var body = '';
     response.on('data', function (chunk) {
       body += chunk;

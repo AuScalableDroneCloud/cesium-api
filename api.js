@@ -405,16 +405,8 @@ app.post('/upload', function (req, res, next) {
 
 function processFileForDownload(sourcePath, inputFileName, outputFileName) {
   return new Promise(function (resolve, reject) {
-    exec(`aws s3 cp ${sourcePath} ${path.join(os.tmpdir(), 'exports', inputFileName)}`, (error, stdout, stderr) => {
-      if (error) {
-        console.error(`exec error: ${error}`);
-        reject();
-        return;
-      }
-      console.log(`stdout: ${stdout}`);
-      console.error(`stderr: ${stderr}`);
-
-      exec(`conda run -n entwine pdal translate ${path.join(os.tmpdir(), 'exports', inputFileName)} ${path.join(os.tmpdir(), 'exports', outputFileName)}`, (error, stdout, stderr) => {
+    if (sourcePath.startsWith("s3://")) {
+      exec(`aws s3 cp ${sourcePath} ${path.join(os.tmpdir(), 'exports', inputFileName)}`, (error, stdout, stderr) => {
         if (error) {
           console.error(`exec error: ${error}`);
           reject();
@@ -423,10 +415,7 @@ function processFileForDownload(sourcePath, inputFileName, outputFileName) {
         console.log(`stdout: ${stdout}`);
         console.error(`stderr: ${stderr}`);
 
-        var tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-
-        exec(`aws s3 cp ${path.join(os.tmpdir(), 'exports', outputFileName)} s3://appf-anu/Cesium/Exports/${outputFileName} --expires ${tomorrow.toISOString()}`, (error, stdout, stderr) => {
+        exec(`conda run -n entwine pdal translate ${path.join(os.tmpdir(), 'exports', inputFileName)} ${path.join(os.tmpdir(), 'exports', outputFileName)}`, (error, stdout, stderr) => {
           if (error) {
             console.error(`exec error: ${error}`);
             reject();
@@ -438,56 +427,57 @@ function processFileForDownload(sourcePath, inputFileName, outputFileName) {
           resolve();
         })
       })
-    })
+    } else {
+      const file = fs.createWriteStream(path.join(os.tmpdir(), 'exports', inputFileName));
+      https.get(sourcePath, function (response) {
+        response.pipe(file);
+        response.on('end', function () {
+          exec(`conda run -n entwine pdal translate ${path.join(os.tmpdir(), 'exports', inputFileName)} ${path.join(os.tmpdir(), 'exports', outputFileName)}`, (error, stdout, stderr) => {
+            if (error) {
+              console.error(`exec error: ${error}`);
+              reject();
+              return;
+            }
+            console.log(`stdout: ${stdout}`);
+            console.error(`stderr: ${stderr}`);
+            resolve();
+          })
+        })
+      });
+    }
   })
 }
 
 function zipFiles(sources, outputFileName) {
   const archive = archiver('zip');
   archive.on('error', error => { throw new Error(`${error.name} ${error.code} ${error.message} ${error.path} ${error.stack}`); });
-
-  const streamPassThrough = new stream.PassThrough();
-
-  var tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
-  const s3Upload = s3.upload({
-    ACL: 'private',
-    Body: streamPassThrough,
-    Bucket: bucket,
-    ContentType: 'application/zip',
-    Key: `Cesium/Exports/${outputFileName}.zip`,
-    Expires: tomorrow
-  }, error => {
-    if (error) {
-      console.error(`Got error creating stream to s3 ${error.name} ${error.message} ${error.stack}`);
-      throw error;
-    }
-  });
-
-  s3Upload.on('httpUploadProgress', (progress) => {
-    console.log(progress);
-  });
+  const file = fs.createWriteStream(path.join(os.tmpdir(), 'exports', outputFileName + '.zip'));
 
   return new Promise((resolve, reject) => {
-    archive.pipe(streamPassThrough);
+    archive.pipe(file);
     sources.map((source) => {
       var key = source.url.slice(`https://${bucket}.s3.ap-southeast-2.amazonaws.com/`.length, source.url.length)
       var fileName = key.slice(key.lastIndexOf('/') + 1, key.length)
       archive.append(s3.getObject({ Bucket: bucket, Key: key }).createReadStream(), { name: source.dir ? source.dir + '/' + fileName : fileName })
     })
+    file.on('finish', () => {
+      console.log("finish");
+      resolve();
+    });
+
     archive.finalize();
-    s3Upload.promise().then(resolve).catch(reject);
+
   })
     .catch(error => { throw new Error(`${error.code} ${error.message} ${error.data}`); });
 }
 
 app.get('/download', function (req, res, next) {
   var assetID = req.query.assetID;
-  var dataIndex = parseInt(req.query.dataIndex);
+  var dataID = parseInt(req.query.dataID);
   var format = req.query.format;
+
   https.get("https://appf-anu.s3.ap-southeast-2.amazonaws.com/Cesium/index.json").on('response', function (response) {
-    // http.get("http://localhost:8080/cesium/Apps/index.json").on('response', function (response) {
+  // http.get("http://localhost:8080/cesium/Apps/ASDC/index.json").on('response', function (response) {
     var body = '';
     response.on('data', function (chunk) {
       body += chunk;
@@ -495,66 +485,57 @@ app.get('/download', function (req, res, next) {
 
     response.on('end', function () {
       var indexJson = JSON.parse(body);
-
       for (var i = 0; i < indexJson.assets.length; i++) {
         var asset = indexJson.assets[i];
         if (asset.id === parseInt(assetID)) {
+          break
+        }
+      }
 
-          var data = asset.data[dataIndex];
+      for (var i = 0; i < indexJson.datasets.length; i++) {
+        var data = indexJson.datasets[i];
+        if (data.id === parseInt(dataID)) {
           if (data.source && data.source.url && data.source.url.endsWith('.' + format)) {
-            var url = s3.getSignedUrl('getObject', {
-              Bucket: bucket,
-              Key: data.source.url.slice(`s3://${bucket}/`.length, data.source.url.length),
-              Expires: 3600
-            })
-            res.status(302).send(url);
+            if (data.source.url.startsWith("s3://")) {
+              var url = s3.getSignedUrl('getObject', {
+                Bucket: bucket,
+                Key: data.source.url.slice(`s3://${bucket}/`.length, data.source.url.length),
+                Expires: 3600
+              })
+              res.status(302).send(url);
+            } else {
+              res.status(302).send(data.source.url);
+            }
           } else {
             if (format != "zip") {
-              var inputFileName = data.source.url.slice(data.source.url.lastIndexOf('/') + 1, data.source.url.length);
-              var outputFileName = inputFileName.slice(0, inputFileName.lastIndexOf('.')) + '.' + format;
-
-              s3.headObject({ Bucket: bucket, Key: `Cesium/Exports/${outputFileName}` }, function (err) {
-                if (err && err.code === 'NotFound') {
-                  processFileForDownload(data.source.url, inputFileName, outputFileName).then(() => {
-                    var url = s3.getSignedUrl('getObject', {
-                      Bucket: bucket,
-                      Key: `Cesium/Exports/${outputFileName}`,
-                      Expires: 3600
-                    })
-
-                    fs.rm(path.join(os.tmpdir(), 'exports', inputFileName), () => { console.log("input file removed") });
-                    fs.rm(path.join(os.tmpdir(), 'exports', outputFileName), () => { console.log("download file removed") });
-
-                    res.status(302).send(url);
-                  })
-                } else {
-                  var url = s3.getSignedUrl('getObject', {
-                    Bucket: bucket,
-                    Key: `Cesium/Exports/${outputFileName}`,
-                    Expires: 3600
-                  })
-                  res.status(302).send(url);
+              if (data.source && data.source.url) {
+                var inputFileName = data.source.url.slice(data.source.url.lastIndexOf('/') + 1, data.source.url.length);
+                var outputFileName = inputFileName.slice(0, inputFileName.lastIndexOf('.')) + '.' + format;
+                
+                if (!fs.existsSync(path.join(os.tmpdir(), 'exports'))) {
+                  fs.mkdirSync(path.join(os.tmpdir(), 'exports'));
                 }
-              });
+
+                processFileForDownload(data.source.url, inputFileName, outputFileName).then(() => {
+                  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+                  res.download(path.join(os.tmpdir(), 'exports', outputFileName), outputFileName);
+
+                  fs.rm(path.join(os.tmpdir(), 'exports', inputFileName), () => { console.log("input file removed") });
+                  fs.rm(path.join(os.tmpdir(), 'exports', outputFileName), () => { console.log("download file removed") });
+                })
+              } else {
+                res.status(404).send("No data source found");
+              }
             } else {
-              s3.headObject({ Bucket: bucket, Key: `Cesium/Exports/${asset.name}.zip` }, function (err) {
-                if (err && err.code === 'NotFound') {
-                  zipFiles(data.source, asset.name).then(() => {
-                    var url = s3.getSignedUrl('getObject', {
-                      Bucket: bucket,
-                      Key: `Cesium/Exports/${asset.name}.zip`,
-                      Expires: 3600
-                    })
-                    res.status(302).send(url);
-                  })
-                } else {
-                  var url = s3.getSignedUrl('getObject', {
-                    Bucket: bucket,
-                    Key: `Cesium/Exports/${asset.name}.zip`,
-                    Expires: 3600
-                  })
-                  res.status(302).send(url);
-                }
+              console.log("zipfiles");
+              if (!fs.existsSync(path.join(os.tmpdir(), 'exports'))) {
+                fs.mkdirSync(path.join(os.tmpdir(), 'exports'));
+              }
+
+              zipFiles(data.source, asset.name).then(() => {
+                res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+                res.download(path.join(os.tmpdir(), 'exports', asset.name + '.zip'), `${asset.name}.zip`);
+                fs.rm(path.join(os.tmpdir(), 'exports', asset.name + '.zip'), () => { console.log("zip file removed") });
               })
             }
           }
@@ -567,6 +548,10 @@ app.get('/download', function (req, res, next) {
 
 app.get('/test', function (req, res, next) {
   res.send('test');
+})
+
+app.get('/version', function (req, res, next) {
+  res.send('v1.0.3');
 })
 
 const server = app.listen(8081, "0.0.0.0");

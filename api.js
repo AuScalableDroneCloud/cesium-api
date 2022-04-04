@@ -403,7 +403,7 @@ app.post('/upload', function (req, res, next) {
 })
 
 
-function processFileForDownload(sourcePath, inputFileName, outputFileName) {
+function processFileForDownload(sourcePath, inputFileName, outputFileName, headers={}) {
   return new Promise(function (resolve, reject) {
     if (sourcePath.startsWith("s3://")) {
       exec(`aws s3 cp ${sourcePath} ${path.join(os.tmpdir(), 'exports', inputFileName)}`, (error, stdout, stderr) => {
@@ -429,7 +429,7 @@ function processFileForDownload(sourcePath, inputFileName, outputFileName) {
       })
     } else {
       const file = fs.createWriteStream(path.join(os.tmpdir(), 'exports', inputFileName));
-      https.get(sourcePath, function (response) {
+      https.get(sourcePath, {headers:headers} ,function (response) {
         response.pipe(file);
         response.on('end', function () {
           exec(`conda run -n entwine pdal translate ${path.join(os.tmpdir(), 'exports', inputFileName)} ${path.join(os.tmpdir(), 'exports', outputFileName)}`, (error, stdout, stderr) => {
@@ -475,75 +475,118 @@ app.get('/download', function (req, res, next) {
   var assetID = req.query.assetID;
   var dataID = parseInt(req.query.dataID);
   var format = req.query.format;
-
-  https.get("https://appf-anu.s3.ap-southeast-2.amazonaws.com/Cesium/index.json").on('response', function (response) {
-  // http.get("http://localhost:8080/cesium/Apps/ASDC/index.json").on('response', function (response) {
-    var body = '';
-    response.on('data', function (chunk) {
-      body += chunk;
-    });
-
-    response.on('end', function () {
-      var indexJson = JSON.parse(body);
-      for (var i = 0; i < indexJson.assets.length; i++) {
-        var asset = indexJson.assets[i];
-        if (asset.id === parseInt(assetID)) {
-          break
-        }
+  var url = req.query.url;
+  if (url){
+    if (url.endsWith('.' + format)){
+      if (url.startsWith("s3://")) {
+        var signedUrl = s3.getSignedUrl('getObject', {
+          Bucket: bucket,
+          Key: url.slice(`s3://${bucket}/`.length, url.length),
+          Expires: 3600
+        })
+        res.setHeader("Set-Cookie", url + `_${format}` + "=download_started");
+        res.redirect(signedUrl);
+      } else {
+        res.redirect(url);
+      }
+    } else {
+      var inputFileName = url.slice(url.lastIndexOf('/') + 1, url.length);
+      var outputFileName = inputFileName.slice(0, inputFileName.lastIndexOf('.')) + '.' + format;
+      
+      if (!fs.existsSync(path.join(os.tmpdir(), 'exports'))) {
+        fs.mkdirSync(path.join(os.tmpdir(), 'exports'));
       }
 
-      for (var i = 0; i < indexJson.datasets.length; i++) {
-        var data = indexJson.datasets[i];
-        if (data.id === parseInt(dataID)) {
-          if (data.source && data.source.url && data.source.url.endsWith('.' + format)) {
-            if (data.source.url.startsWith("s3://")) {
-              var url = s3.getSignedUrl('getObject', {
-                Bucket: bucket,
-                Key: data.source.url.slice(`s3://${bucket}/`.length, data.source.url.length),
-                Expires: 3600
-              })
-              res.status(302).send(url);
+      var headers = url.startsWith("https://asdc.cloud.edu.au/") && req.headers.cookie ? {'cookie' : req.headers.cookie}:null
+      processFileForDownload(url, inputFileName, outputFileName, headers).then(() => {
+        res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+
+        if (req.headers.origin){
+          res.setHeader("Access-Control-Allow-Origin", req.headers.origin);
+        }
+        
+        res.setHeader("Access-Control-Allow-Credentials", true);
+        res.setHeader("Set-Cookie", url + `_${format}` + "=download_started");
+        res.download(path.join(os.tmpdir(), 'exports', outputFileName), outputFileName);
+
+        fs.rm(path.join(os.tmpdir(), 'exports', inputFileName), () => { console.log("input file removed") });
+        fs.rm(path.join(os.tmpdir(), 'exports', outputFileName), () => { console.log("download file removed") });
+      })
+    }
+  } else {
+    https.get("https://appf-anu.s3.ap-southeast-2.amazonaws.com/Cesium/index.json").on('response', function (response) {
+    // http.get("http://localhost:8080/cesium/Apps/ASDC/index.json").on('response', function (response) {
+      var body = '';
+      response.on('data', function (chunk) {
+        body += chunk;
+      });
+
+      response.on('end', function () {
+        var indexJson = JSON.parse(body);
+        for (var i = 0; i < indexJson.assets.length; i++) {
+          var asset = indexJson.assets[i];
+          if (asset.id === parseInt(assetID)) {
+            break
+          }
+        }
+
+        for (var i = 0; i < indexJson.datasets.length; i++) {
+          var data = indexJson.datasets[i];
+          if (data.id === parseInt(dataID)) {
+            if (data.source && data.source.url && data.source.url.endsWith('.' + format)) {
+              if (data.source.url.startsWith("s3://")) {
+                var url = s3.getSignedUrl('getObject', {
+                  Bucket: bucket,
+                  Key: data.source.url.slice(`s3://${bucket}/`.length, data.source.url.length),
+                  Expires: 3600
+                })
+
+                res.setHeader("Set-Cookie", data.source.url + `_${format}` + "=download_started");
+                res.redirect(url);
+              } else {
+                res.redirect(data.source.url);
+              }
             } else {
-              res.status(302).send(data.source.url);
-            }
-          } else {
-            if (format != "zip") {
-              if (data.source && data.source.url) {
-                var inputFileName = data.source.url.slice(data.source.url.lastIndexOf('/') + 1, data.source.url.length);
-                var outputFileName = inputFileName.slice(0, inputFileName.lastIndexOf('.')) + '.' + format;
-                
+              if (format != "zip") {
+                if (data.source && data.source.url) {
+                  var inputFileName = data.source.url.slice(data.source.url.lastIndexOf('/') + 1, data.source.url.length);
+                  var outputFileName = inputFileName.slice(0, inputFileName.lastIndexOf('.')) + '.' + format;
+                  
+                  if (!fs.existsSync(path.join(os.tmpdir(), 'exports'))) {
+                    fs.mkdirSync(path.join(os.tmpdir(), 'exports'));
+                  }
+
+                  processFileForDownload(data.source.url, inputFileName, outputFileName).then(() => {
+                    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+                    res.setHeader("Set-Cookie", data.source.url + `_${format}` + "=download_started");
+                    res.download(path.join(os.tmpdir(), 'exports', outputFileName), outputFileName);
+
+                    fs.rm(path.join(os.tmpdir(), 'exports', inputFileName), () => { console.log("input file removed") });
+                    fs.rm(path.join(os.tmpdir(), 'exports', outputFileName), () => { console.log("download file removed") });
+                  })
+                } else {
+                  res.status(404).send("No data source found");
+                }
+              } else {
                 if (!fs.existsSync(path.join(os.tmpdir(), 'exports'))) {
                   fs.mkdirSync(path.join(os.tmpdir(), 'exports'));
                 }
 
-                processFileForDownload(data.source.url, inputFileName, outputFileName).then(() => {
+                zipFiles(data.source, asset.name).then(() => {
                   res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
-                  res.download(path.join(os.tmpdir(), 'exports', outputFileName), outputFileName);
+                  res.setHeader("Set-Cookie", data.source[0].url + `_${format}` + "=download_started");
 
-                  fs.rm(path.join(os.tmpdir(), 'exports', inputFileName), () => { console.log("input file removed") });
-                  fs.rm(path.join(os.tmpdir(), 'exports', outputFileName), () => { console.log("download file removed") });
+                  res.download(path.join(os.tmpdir(), 'exports', asset.name + '.zip'), `${asset.name}.zip`);
+                  fs.rm(path.join(os.tmpdir(), 'exports', asset.name + '.zip'), () => { console.log("zip file removed") });
                 })
-              } else {
-                res.status(404).send("No data source found");
               }
-            } else {
-              console.log("zipfiles");
-              if (!fs.existsSync(path.join(os.tmpdir(), 'exports'))) {
-                fs.mkdirSync(path.join(os.tmpdir(), 'exports'));
-              }
-
-              zipFiles(data.source, asset.name).then(() => {
-                res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
-                res.download(path.join(os.tmpdir(), 'exports', asset.name + '.zip'), `${asset.name}.zip`);
-                fs.rm(path.join(os.tmpdir(), 'exports', asset.name + '.zip'), () => { console.log("zip file removed") });
-              })
             }
+            break;
           }
-          break;
         }
-      }
-    });
-  })
+      });
+    })
+  }
 })
 
 app.get('/test', function (req, res, next) {

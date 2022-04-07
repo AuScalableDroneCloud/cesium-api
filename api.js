@@ -484,7 +484,7 @@ app.get('/download', function (req, res, next) {
           Key: url.slice(`s3://${bucket}/`.length, url.length),
           Expires: 3600
         })
-        res.setHeader("Set-Cookie", url + `_${format}` + "=download_started");
+        res.setHeader("Set-Cookie", url + `_${format}` + "=download_started;Path=/;");
         res.redirect(signedUrl);
       } else {
         res.redirect(url);
@@ -506,7 +506,7 @@ app.get('/download', function (req, res, next) {
         }
         
         res.setHeader("Access-Control-Allow-Credentials", true);
-        res.setHeader("Set-Cookie", url + `_${format}` + "=download_started");
+        res.setHeader("Set-Cookie", url + `_${format}` + "=download_started;Path=/;");
         res.download(path.join(os.tmpdir(), 'exports', outputFileName), outputFileName);
 
         fs.rm(path.join(os.tmpdir(), 'exports', inputFileName), () => { console.log("input file removed") });
@@ -541,7 +541,7 @@ app.get('/download', function (req, res, next) {
                   Expires: 3600
                 })
 
-                res.setHeader("Set-Cookie", data.source.url + `_${format}` + "=download_started");
+                res.setHeader("Set-Cookie", data.source.url + `_${format}` + "=download_started;Path=/;");
                 res.redirect(url);
               } else {
                 res.redirect(data.source.url);
@@ -558,7 +558,7 @@ app.get('/download', function (req, res, next) {
 
                   processFileForDownload(data.source.url, inputFileName, outputFileName).then(() => {
                     res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
-                    res.setHeader("Set-Cookie", data.source.url + `_${format}` + "=download_started");
+                    res.setHeader("Set-Cookie", data.source.url + `_${format}` + "=download_started;Path=/;");
                     res.download(path.join(os.tmpdir(), 'exports', outputFileName), outputFileName);
 
                     fs.rm(path.join(os.tmpdir(), 'exports', inputFileName), () => { console.log("input file removed") });
@@ -574,7 +574,7 @@ app.get('/download', function (req, res, next) {
 
                 zipFiles(data.source, asset.name).then(() => {
                   res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
-                  res.setHeader("Set-Cookie", data.source[0].url + `_${format}` + "=download_started");
+                  res.setHeader("Set-Cookie", data.source[0].url + `_${format}` + "=download_started;Path=/;");
 
                   res.download(path.join(os.tmpdir(), 'exports', asset.name + '.zip'), `${asset.name}.zip`);
                   fs.rm(path.join(os.tmpdir(), 'exports', asset.name + '.zip'), () => { console.log("zip file removed") });

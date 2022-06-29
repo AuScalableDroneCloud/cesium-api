@@ -23,6 +23,8 @@ app.use(function (req, res, next) {
 const { exec } = require('child_process');
 
 var bucket = "appf-anu";
+//to determine whether to pass auth cookies for download
+const trustedServers = ["https://asdc.cloud.edu.au/", "https://dev.asdc.cloud.edu.au/"]
 
 AWS.config.update({
   credentials: new AWS.Credentials({
@@ -497,7 +499,7 @@ app.get('/download', function (req, res, next) {
         fs.mkdirSync(path.join(os.tmpdir(), 'exports'));
       }
 
-      var headers = url.startsWith("https://asdc.cloud.edu.au/") && req.headers.cookie ? {'cookie' : req.headers.cookie}:null
+      var headers = !!trustedServers.find(s=>url.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null
       processFileForDownload(url, inputFileName, outputFileName, headers).then(() => {
         res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
 

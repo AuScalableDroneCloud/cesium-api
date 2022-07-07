@@ -9,6 +9,7 @@ const os = require('os');
 const Cesium = require('cesium');
 const archiver = require('archiver');
 const stream = require('stream');
+const { exec, execSync } = require('child_process');
 
 // app.use(compression());
 app.use(function (req, res, next) {
@@ -19,8 +20,6 @@ app.use(function (req, res, next) {
   );
   next();
 });
-
-const { exec } = require('child_process');
 
 var bucket = "appf-anu";
 //to determine whether to pass auth cookies for download
@@ -591,12 +590,83 @@ app.get('/download', function (req, res, next) {
   }
 })
 
-app.get('/test', function (req, res, next) {
-  res.send('test');
+app.get('/crop', function(req, res, next) {
+  var ept = req.query.ept;
+  const regex = /\/projects\/([^\/]*)\/tasks\/([^\/]*)\//;
+  var match = regex.exec(ept);
+  var project = match[1];
+  var task = match[2];
+  var bbox = req.query.bbox.split(',');
+  var polygon = req.query.polygon;
+  var outside = req.query.outside.toLowerCase()==="true";
+
+  const headers = !!trustedServers.find(s=>ept.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null
+
+  if (!fs.existsSync(path.join(os.tmpdir(), 'exports'))) {
+    fs.mkdirSync(path.join(os.tmpdir(), 'exports'));
+  }
+  if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project))) {
+    fs.mkdirSync(path.join(os.tmpdir(), 'exports', project));
+  }
+  if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task))) {
+    fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task));
+  }
+
+  var currentDate = new Date().toISOString().replace(/:/g,"-");
+  
+  if (!outside){
+    var pipeline= [
+      {
+        "type": "readers.ept",
+        "filename": ept,
+        "bounds":`([${bbox[0]},${bbox[1]}],[${bbox[2]},${bbox[3]}],[${bbox[4]},${bbox[5]}])/EPSG:4326`
+      },
+      {
+        "type": "filters.crop",
+        "polygon": `${polygon}/EPSG:4326`,
+        "a_srs": "EPSG:4326",
+      },
+      {
+        "type": "writers.las",
+        "filename": `${path.join(os.tmpdir(), 'exports', project, task,'cropped.laz')}`
+      }
+    ]
+  } else {
+    var pipeline = [
+      {
+        "type": "readers.ept",
+        "filename": ept
+      },
+      {
+        "type": "filters.crop",
+        "polygon": `${polygon}/EPSG:4326`,
+        "where": `Z>=${bbox[4]} && Z<=${bbox[5]}`,
+        "a_srs": "EPSG:4326",
+        "outside": true
+      },
+      {
+        "type": "writers.las",
+        "filename": `${path.join(os.tmpdir(), 'exports', project, task,'cropped.laz')}`
+      }
+    ]
+  }
+
+  if (headers) {
+    pipeline[0].header=headers;
+  }
+
+
+  fs.writeFileSync(path.join(os.tmpdir(), 'exports', project, task,`pipeline_${currentDate}.json`), JSON.stringify(pipeline));
+  
+  execSync(`conda run -n entwine pdal pipeline ${path.join(os.tmpdir(), 'exports', project, task,`pipeline_${currentDate}.json`)}`,{stdio: 'inherit'})
+
+  res.download(path.join(os.tmpdir(), 'exports', project, task,`cropped.laz`),'cropped.laz',function(err){
+    fs.rmSync(path.join(os.tmpdir(), 'exports', project, task), { recursive: true })
+  });
 })
 
-app.get('/version', function (req, res, next) {
-  res.send('v1.0.3');
+app.get('/test', function (req, res, next) {
+  res.send('test');
 })
 
 const server = app.listen(8081, "0.0.0.0");

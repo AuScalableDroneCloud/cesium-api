@@ -10,6 +10,7 @@ const Cesium = require('cesium');
 const archiver = require('archiver');
 const stream = require('stream');
 const { exec, execSync } = require('child_process');
+const { v4: uuidv4 } = require('uuid');
 
 // app.use(compression());
 app.use(function (req, res, next) {
@@ -594,13 +595,19 @@ app.get('/crop', function(req, res, next) {
   var ept = req.query.ept;
   const regex = /\/projects\/([^\/]*)\/tasks\/([^\/]*)\//;
   var match = regex.exec(ept);
-  var project = match[1];
-  var task = match[2];
+  if (match && match.length>=2){
+    var project = match[1];
+    var task = match[2];
+    var headers = !!trustedServers.find(s=>ept.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null
+  } else {
+    var project = "others";
+    var task = uuidv4();
+  }
+
   var bbox = req.query.bbox.split(',');
   var polygon = req.query.polygon;
   var outside = req.query.outside.toLowerCase()==="true";
 
-  const headers = !!trustedServers.find(s=>ept.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null
 
   if (!fs.existsSync(path.join(os.tmpdir(), 'exports'))) {
     fs.mkdirSync(path.join(os.tmpdir(), 'exports'));

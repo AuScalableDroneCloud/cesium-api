@@ -598,7 +598,7 @@ app.get('/crop', function(req, res, next) {
   if (match && match.length>=2){
     var project = match[1];
     var task = match[2];
-    var headers = !!trustedServers.find(s=>ept.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null
+    var headers = !!trustedServers.find(s=>ept.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null;
   } else {
     var project = "others";
     var task = uuidv4();
@@ -607,7 +607,11 @@ app.get('/crop', function(req, res, next) {
   var bbox = req.query.bbox.split(',');
   var polygon = req.query.polygon;
   var outside = req.query.outside.toLowerCase()==="true";
-
+  var filename = req.query.filename.replace(/[/\\?%*:|"<>]/g, ' ').slice(0,256) ?? "cropped.laz";
+  if (filename.slice(filename.length-4).toLowerCase() !=".laz") {
+    filename = filename.slice(0,252);
+    filename+=".laz";
+  }
 
   if (!fs.existsSync(path.join(os.tmpdir(), 'exports'))) {
     fs.mkdirSync(path.join(os.tmpdir(), 'exports'));
@@ -635,7 +639,7 @@ app.get('/crop', function(req, res, next) {
       },
       {
         "type": "writers.las",
-        "filename": `${path.join(os.tmpdir(), 'exports', project, task,'cropped.laz')}`
+        "filename": `${path.join(os.tmpdir(), 'exports', project, task, filename)}`
       }
     ]
   } else {
@@ -653,7 +657,7 @@ app.get('/crop', function(req, res, next) {
       },
       {
         "type": "writers.las",
-        "filename": `${path.join(os.tmpdir(), 'exports', project, task,'cropped.laz')}`
+        "filename": `${path.join(os.tmpdir(), 'exports', project, task, filename)}`
       }
     ]
   }
@@ -662,12 +666,11 @@ app.get('/crop', function(req, res, next) {
     pipeline[0].header=headers;
   }
 
-
   fs.writeFileSync(path.join(os.tmpdir(), 'exports', project, task,`pipeline_${currentDate}.json`), JSON.stringify(pipeline));
   
   execSync(`conda run -n entwine pdal pipeline ${path.join(os.tmpdir(), 'exports', project, task,`pipeline_${currentDate}.json`)}`,{stdio: 'inherit'})
 
-  res.download(path.join(os.tmpdir(), 'exports', project, task,`cropped.laz`),'cropped.laz',function(err){
+  res.download(path.join(os.tmpdir(), 'exports', project, task, filename), filename, function(err){
     fs.rmSync(path.join(os.tmpdir(), 'exports', project, task), { recursive: true })
   });
 })

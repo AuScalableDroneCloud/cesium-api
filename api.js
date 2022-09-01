@@ -607,7 +607,7 @@ app.get('/crop', function(req, res, next) {
   var bbox = req.query.bbox.split(',');
   var polygon = req.query.polygon;
   var outside = req.query.outside.toLowerCase()==="true";
-  var filename = req.query.filename.replace(/[/\\?%*:|"<>]/g, ' ').slice(0,256) ?? "cropped.laz";
+  var filename = req.query.filename ? req.query.filename.replace(/[/\\?%*:|"<>]/g, ' ').slice(0,256) : "cropped.laz";
   if (filename.slice(filename.length-4).toLowerCase() !=".laz") {
     filename = filename.slice(0,252);
     filename+=".laz";

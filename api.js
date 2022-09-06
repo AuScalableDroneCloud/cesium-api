@@ -11,6 +11,9 @@ const archiver = require('archiver');
 const stream = require('stream');
 const { exec, execSync } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
+const fetch = (...args) =>import('node-fetch').then(({ default: fetch }) => fetch(...args));
+const { AbortController } = require("node-abort-controller");
+const kill = require('tree-kill');
 
 // app.use(compression());
 app.use(function (req, res, next) {
@@ -671,8 +674,120 @@ app.get('/crop', function(req, res, next) {
   execSync(`conda run -n entwine pdal pipeline ${path.join(os.tmpdir(), 'exports', project, task,`pipeline_${currentDate}.json`)}`,{stdio: 'inherit'})
 
   res.download(path.join(os.tmpdir(), 'exports', project, task, filename), filename, function(err){
-    fs.rmSync(path.join(os.tmpdir(), 'exports', project, task), { recursive: true })
+    if (fs.existsSync(path.join(os.tmpdir(), 'exports', project, task))) {
+      fs.rmSync(path.join(os.tmpdir(), 'exports', project, task), { recursive: true })
+    }
   });
+})
+
+app.get('/eptNumPoints', function(req, res, next) {
+  var ept = req.query.ept;
+  var bbox = req.query.bbox.split(',');
+  var polygon = req.query.polygon;
+  var uuid = uuidv4();
+
+  if (!fs.existsSync(path.join(os.tmpdir(), 'pdal_pipelines'))) {
+    fs.mkdirSync(path.join(os.tmpdir(), 'pdal_pipelines'));
+  }
+  if (!fs.existsSync(path.join(os.tmpdir(), 'pdal_pipelines', uuid))) {
+    fs.mkdirSync(path.join(os.tmpdir(), 'pdal_pipelines', uuid));
+  }
+
+  var pipeline = [
+    {
+      "type": "readers.ept",
+      "filename": ept,
+      "bounds": `([${bbox[0]},${bbox[1]}],[${bbox[2]},${bbox[3]}],[${bbox[4]},${bbox[5]}])/EPSG:4326`,
+      // "polygon": `${polygon}/EPSG:4326`  //wrong results
+    },
+    {
+      "type": "filters.crop",
+      "polygon": `${polygon}/EPSG:4326`,
+      "a_srs": "EPSG:4326",
+    },
+    {
+      "type":"filters.info"
+    }
+  ]
+
+  fs.writeFileSync(path.join(os.tmpdir(), 'pdal_pipelines', uuid, `pipeline_${uuid}.json`), JSON.stringify(pipeline));
+
+  var proc = exec(`conda run -n entwine pdal pipeline ${path.join(os.tmpdir(), 'pdal_pipelines', uuid, `pipeline_${uuid}.json`)} --metadata ${path.join(os.tmpdir(), 'pdal_pipelines', uuid, `info_${uuid}.json`)}`,(error, stdout, stderr) => {
+    if (error) {
+      console.error(`exec error: ${error}`);
+      return;
+    }
+    console.log(`stdout: ${stdout}`);
+    console.error(`stderr: ${stderr}`);
+
+    var data = fs.readFileSync(`${path.join(os.tmpdir(), 'pdal_pipelines', uuid, `info_${uuid}.json`)}`, {encoding:'utf8', flag:'r'});
+    data = JSON.parse(data);
+
+    res.send(data.stages["filters.info"]["num_points"].toString());
+
+    if (fs.existsSync(path.join(os.tmpdir(), 'pdal_pipelines', uuid))) {
+      fs.rmSync(path.join(os.tmpdir(), 'pdal_pipelines', uuid), { recursive: true })
+    }
+  })
+
+  req.on('close', function (err){
+    kill(proc.pid);
+
+    if (fs.existsSync(path.join(os.tmpdir(), 'pdal_pipelines', uuid))) {
+      fs.rmSync(path.join(os.tmpdir(), 'pdal_pipelines', uuid), { recursive: true })
+    }
+ });
+})
+
+app.get('/eptFileSize', function(req, res, next) {
+  var ept = req.query.ept;
+  var eptHierarchy = ept.slice(0,ept.length-9) + `/ept-hierarchy/0-0-0-0.json`;
+  
+  var controller = new AbortController();
+
+  fetch(eptHierarchy,{
+    signal:controller.signal
+  })
+  .then((response)=>response.json())
+  .then((response)=>{
+    var reqs = [];
+    var total = 0;
+    Object.keys(response).map(k=>{
+      var eptData = ept.slice(0,ept.length-9) + `/ept-data/${k}.laz`;
+      reqs.push(
+        fetch(eptData, { 
+          method: 'HEAD',
+          signal:controller.signal
+         })
+         .then((resp)=>{
+          const contentLength = resp.headers.get('Content-Length');
+          total += Number(contentLength);
+        })
+        .catch((error) => {
+          if (error.name !== "AbortError") {
+            console.log(error);
+          }
+        })
+      )
+    })
+
+    Promise.all(reqs).then(()=>{
+      res.send(total.toString());
+    }).catch((error) => {
+      if (error.name !== "AbortError") {
+        console.log(error);
+      }
+    })
+  })
+  .catch((error) => {
+    if (error.name !== "AbortError") {
+      console.log(error);
+    }
+  })
+
+  req.on('close', function (err){
+    controller.abort();
+  }); 
 })
 
 app.get('/test', function (req, res, next) {

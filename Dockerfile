@@ -10,6 +10,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash -
 RUN apt-get install -y nodejs
 RUN npm install ept-tools -g
 RUN apt-get install -y awscli
+RUN apt-get install -y procps
 
 WORKDIR /app
 COPY . /app

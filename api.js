@@ -715,6 +715,7 @@ app.get('/eptNumPoints', function(req, res, next) {
   var proc = exec(`conda run -n entwine pdal pipeline ${path.join(os.tmpdir(), 'pdal_pipelines', uuid, `pipeline_${uuid}.json`)} --metadata ${path.join(os.tmpdir(), 'pdal_pipelines', uuid, `info_${uuid}.json`)}`,(error, stdout, stderr) => {
     if (error) {
       console.error(`exec error: ${error}`);
+      res.status(500).send();
       return;
     }
     console.log(`stdout: ${stdout}`);
@@ -755,24 +756,30 @@ app.get('/eptFileSize', function(req, res, next) {
     Object.keys(response).map(k=>{
       var eptData = ept.slice(0,ept.length-9) + `/ept-data/${k}.laz`;
       reqs.push(
-        fetch(eptData, { 
-          method: 'HEAD',
-          signal:controller.signal
-         })
-         .then((resp)=>{
-          const contentLength = resp.headers.get('Content-Length');
-          total += Number(contentLength);
-        })
-        .catch((error) => {
-          if (error.name !== "AbortError") {
-            console.log(error);
-          }
-        })
+          fetch(eptData, { 
+            method: 'HEAD',
+            signal:controller.signal
+          })
+          .then((resp)=>{
+            const contentLength = resp.headers.get('Content-Length');
+            total += Number(contentLength);
+          })
+          .catch((error) => {
+            if (error.name !== "AbortError") {
+              console.log(error);
+              controller.abort();
+              return error;
+            }
+          })
       )
     })
 
-    Promise.all(reqs).then(()=>{
-      res.send(total.toString());
+    Promise.all(reqs).then((resps)=>{      
+      if(!resps.find(r=>r instanceof Error)){
+        res.send(total.toString());
+      } else {
+        res.status(500).send();
+      }
     }).catch((error) => {
       if (error.name !== "AbortError") {
         console.log(error);

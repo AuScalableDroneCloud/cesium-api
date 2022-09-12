@@ -17,7 +17,8 @@ const kill = require('tree-kill');
 
 // app.use(compression());
 app.use(function (req, res, next) {
-  res.header("Access-Control-Allow-Origin", "*");
+  // res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Origin", req.headers.origin || "*");
   res.header(
     "Access-Control-Allow-Headers",
     "Origin, X-Requested-With, Content-Type, Accept"
@@ -453,20 +454,24 @@ function processFileForDownload(sourcePath, inputFileName, outputFileName, heade
   })
 }
 
-function zipFiles(sources, outputFileName) {
+function zipFiles(sources, outputFile, remoteFiles) {
   const archive = archiver('zip');
   archive.on('error', error => { throw new Error(`${error.name} ${error.code} ${error.message} ${error.path} ${error.stack}`); });
-  const file = fs.createWriteStream(path.join(os.tmpdir(), 'exports', outputFileName + '.zip'));
+  const file = fs.createWriteStream(outputFile);
 
   return new Promise((resolve, reject) => {
     archive.pipe(file);
     sources.map((source) => {
-      var key = source.url.slice(`https://${bucket}.s3.ap-southeast-2.amazonaws.com/`.length, source.url.length)
-      var fileName = key.slice(key.lastIndexOf('/') + 1, key.length)
-      archive.append(s3.getObject({ Bucket: bucket, Key: key }).createReadStream(), { name: source.dir ? source.dir + '/' + fileName : fileName })
+      if (remoteFiles){
+        var key = source.url.slice(`https://${bucket}.s3.ap-southeast-2.amazonaws.com/`.length, source.url.length)
+        var fileName = key.slice(key.lastIndexOf('/') + 1, key.length)
+        archive.append(s3.getObject({ Bucket: bucket, Key: key }).createReadStream(), { name: source.dir ? source.dir + '/' + fileName : fileName })
+      } else {
+        var fileName = source.slice(source.lastIndexOf('/') + 1, source.length)
+        archive.append(fs.createReadStream(source),{name:fileName})
+      }
     })
     file.on('finish', () => {
-      console.log("finish");
       resolve();
     });
 
@@ -576,13 +581,14 @@ app.get('/download', function (req, res, next) {
                 if (!fs.existsSync(path.join(os.tmpdir(), 'exports'))) {
                   fs.mkdirSync(path.join(os.tmpdir(), 'exports'));
                 }
-
-                zipFiles(data.source, asset.name).then(() => {
+                var outFile = path.join(os.tmpdir(), 'exports', asset.name + '.zip');
+                zipFiles(data.source, outFile, true).then(() => {
                   res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
                   res.setHeader("Set-Cookie", data.source[0].url + `_${format}` + "=download_started;Path=/;");
 
-                  res.download(path.join(os.tmpdir(), 'exports', asset.name + '.zip'), `${asset.name}.zip`);
-                  fs.rm(path.join(os.tmpdir(), 'exports', asset.name + '.zip'), () => { console.log("zip file removed") });
+                  res.download(outFile, `${asset.name}.zip`);
+
+                  fs.rm(outFile, () => { console.log("zip file removed") });
                 })
               }
             }
@@ -598,15 +604,6 @@ app.get('/crop', function(req, res, next) {
   var ept = req.query.ept;
   const regex = /\/projects\/([^\/]*)\/tasks\/([^\/]*)\//;
   var match = regex.exec(ept);
-  if (match && match.length>=2){
-    var project = match[1];
-    var task = match[2];
-    var headers = !!trustedServers.find(s=>ept.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null;
-  } else {
-    var project = "others";
-    var task = uuidv4();
-  }
-
   var bbox = req.query.bbox.split(',');
   var polygon = req.query.polygon;
   var outside = req.query.outside.toLowerCase()==="true";
@@ -615,6 +612,29 @@ app.get('/crop', function(req, res, next) {
     filename = filename.slice(0,252);
     filename+=".laz";
   }
+  var metadata_req;
+
+  if (match && match.length>=2){
+    var project = match[1];
+    var task = match[2];
+    var headers = !!trustedServers.find(s=>ept.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null;
+
+    var uuid = uuidv4();
+    var eptURL = new URL(ept);
+    var task_metadata = `${eptURL.origin}/api/projects/${project}/tasks/${task}/`;
+    var task_metadata_path = path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`);
+    var zipPath = path.join(os.tmpdir(), 'exports', project, task, uuid, filename.slice(0, filename.lastIndexOf('.')))+'.zip';
+
+    metadata_req = fetch(task_metadata,{headers:headers})
+      .then((response)=>response.text())
+      .then(text=>{
+        fs.writeFileSync(path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`), text);
+      })
+  } else {
+    var project = "others";
+    var uuid = uuidv4();
+    var zipPath = path.join(os.tmpdir(), 'exports', project, uuid, filename.slice(0, filename.lastIndexOf('.')))+'.zip';
+  }  
 
   if (!fs.existsSync(path.join(os.tmpdir(), 'exports'))) {
     fs.mkdirSync(path.join(os.tmpdir(), 'exports'));
@@ -622,11 +642,34 @@ app.get('/crop', function(req, res, next) {
   if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project))) {
     fs.mkdirSync(path.join(os.tmpdir(), 'exports', project));
   }
-  if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task))) {
-    fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task));
-  }
 
   var currentDate = new Date().toISOString().replace(/:/g,"-");
+
+  if (task){
+    if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task))) {
+      fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task));
+    }
+
+    if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task, uuid))) {
+      fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task, uuid));
+    }
+
+    var filePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, filename)}`;
+    var pipelinePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `pipeline_${currentDate}.json`);
+    var infoPipelinePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `info_pipeline_${currentDate}.json`);
+    var infoFilePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `info_${filename}.json`);
+    var filesDir = path.join(os.tmpdir(), 'exports', project, task, uuid);
+  } else {
+    if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, uuid))) {
+      fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, uuid));
+    }
+
+    var filePath = `${path.join(os.tmpdir(), 'exports', project, uuid, filename)}`;
+    var pipelinePath = path.join(os.tmpdir(), 'exports', project, uuid, `pipeline_${currentDate}.json`);
+    var infoPipelinePath = path.join(os.tmpdir(), 'exports', project, uuid, `info_pipeline_${currentDate}.json`);
+    var infoFilePath = path.join(os.tmpdir(), 'exports', project, uuid, `info_${filename}.json`);
+    var filesDir = path.join(os.tmpdir(), 'exports', project, uuid);
+  }
   
   if (!outside){
     var pipeline= [
@@ -642,7 +685,7 @@ app.get('/crop', function(req, res, next) {
       },
       {
         "type": "writers.las",
-        "filename": `${path.join(os.tmpdir(), 'exports', project, task, filename)}`
+        "filename": filePath
       }
     ]
   } else {
@@ -660,24 +703,63 @@ app.get('/crop', function(req, res, next) {
       },
       {
         "type": "writers.las",
-        "filename": `${path.join(os.tmpdir(), 'exports', project, task, filename)}`
+        "filename": filePath
       }
     ]
   }
+
+  var info_pipeline = [
+    {
+      "type": "readers.las",
+      "filename" : filePath
+    },
+    {
+      "type":"filters.info"
+    }
+  ]
 
   if (headers) {
     pipeline[0].header=headers;
   }
 
-  fs.writeFileSync(path.join(os.tmpdir(), 'exports', project, task,`pipeline_${currentDate}.json`), JSON.stringify(pipeline));
+  fs.writeFileSync(pipelinePath, JSON.stringify(pipeline));
+  fs.writeFileSync(infoPipelinePath, JSON.stringify(info_pipeline));
   
-  execSync(`conda run -n entwine pdal pipeline ${path.join(os.tmpdir(), 'exports', project, task,`pipeline_${currentDate}.json`)}`,{stdio: 'inherit'})
+  var info_proc;
+  var proc = exec(`conda run -n entwine pdal pipeline "${pipelinePath}"`,(error, stdout, stderr)=>{
+    info_proc = exec(`conda run -n entwine pdal pipeline "${infoPipelinePath}" --metadata "${infoFilePath}"`,(error, stdout, stderr)=>{
+      var files = [filePath,infoFilePath];
+      if (metadata_req){
+        metadata_req.then(()=>{
+          files.push(task_metadata_path)
+          
+          zipFiles(files,zipPath).then(()=>{
+            res.download(zipPath, function(err){
+              if (fs.existsSync(filesDir)) {
+                fs.rmSync(filesDir, { recursive: true })
+              }
+            });
+          })
+        })
+      } else {
+        zipFiles(files,zipPath).then(()=>{
+          res.download(zipPath, function(err){
+            if (fs.existsSync(filesDir)) {
+              fs.rmSync(filesDir, { recursive: true })
+            }
+          });
+        })
+      }
+    })
+  })
 
-  res.download(path.join(os.tmpdir(), 'exports', project, task, filename), filename, function(err){
-    if (fs.existsSync(path.join(os.tmpdir(), 'exports', project, task))) {
-      fs.rmSync(path.join(os.tmpdir(), 'exports', project, task), { recursive: true })
+  req.on('close', function (err){
+    if (proc && proc.pid) kill(proc.pid);
+    if (info_proc && info_proc.pid) kill(info_proc.pid);
+    if (fs.existsSync(filesDir)) {
+      fs.rmSync(filesDir, { recursive: true })
     }
-  });
+ });
 })
 
 app.get('/eptNumPoints', function(req, res, next) {
@@ -685,6 +767,7 @@ app.get('/eptNumPoints', function(req, res, next) {
   var bbox = req.query.bbox.split(',');
   var polygon = req.query.polygon;
   var uuid = uuidv4();
+  var headers = !!trustedServers.find(s=>ept.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null;
 
   if (!fs.existsSync(path.join(os.tmpdir(), 'pdal_pipelines'))) {
     fs.mkdirSync(path.join(os.tmpdir(), 'pdal_pipelines'));
@@ -709,6 +792,11 @@ app.get('/eptNumPoints', function(req, res, next) {
       "type":"filters.info"
     }
   ]
+
+  if (headers){
+    pipeline[0].header = headers;
+  }
+  res.setHeader("Access-Control-Allow-Credentials", true);
 
   fs.writeFileSync(path.join(os.tmpdir(), 'pdal_pipelines', uuid, `pipeline_${uuid}.json`), JSON.stringify(pipeline));
 
@@ -743,11 +831,15 @@ app.get('/eptNumPoints', function(req, res, next) {
 app.get('/eptFileSize', function(req, res, next) {
   var ept = req.query.ept;
   var eptHierarchy = ept.slice(0,ept.length-9) + `/ept-hierarchy/0-0-0-0.json`;
+  var headers = !!trustedServers.find(s=>ept.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null;
   
+  res.setHeader("Access-Control-Allow-Credentials", true);
+
   var controller = new AbortController();
 
   fetch(eptHierarchy,{
-    signal:controller.signal
+    signal:controller.signal,
+    headers:headers
   })
   .then((response)=>response.json())
   .then((response)=>{
@@ -758,7 +850,8 @@ app.get('/eptFileSize', function(req, res, next) {
       reqs.push(
           fetch(eptData, { 
             method: 'HEAD',
-            signal:controller.signal
+            signal:controller.signal,
+            headers:headers
           })
           .then((resp)=>{
             const contentLength = resp.headers.get('Content-Length');

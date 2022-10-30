@@ -459,15 +459,33 @@ function zipFiles(sources, outputFile, remoteFiles) {
   archive.on('error', error => { throw new Error(`${error.name} ${error.code} ${error.message} ${error.path} ${error.stack}`); });
   const file = fs.createWriteStream(outputFile);
 
+  var fileNames=[];
+  if (!remoteFiles){
+    var sourceFileNames = sources.map(s=>
+      s.slice(s.lastIndexOf('/') + 1, s.length)
+    )
+
+    sourceFileNames.map((fn,i)=>{
+      if (sourceFileNames.slice(0,i).includes(fn)){
+        var count = sourceFileNames.slice(0,i).filter(x => x==fn).length;
+        fileNames.push(
+          `${fn.slice(0,fn.lastIndexOf('.'))}_${count}.${fn.slice(fn.lastIndexOf('.') + 1, fn.length)}`
+        );
+      } else {
+        fileNames.push(fn)
+      }
+    })
+  }
+
   return new Promise((resolve, reject) => {
     archive.pipe(file);
-    sources.map((source) => {
+    sources.map((source,i) => {
       if (remoteFiles){
         var key = source.url.slice(`https://${bucket}.s3.ap-southeast-2.amazonaws.com/`.length, source.url.length)
         var fileName = key.slice(key.lastIndexOf('/') + 1, key.length)
         archive.append(s3.getObject({ Bucket: bucket, Key: key }).createReadStream(), { name: source.dir ? source.dir + '/' + fileName : fileName })
       } else {
-        var fileName = source.slice(source.lastIndexOf('/') + 1, source.length)
+        var fileName = fileNames[i];
         archive.append(fs.createReadStream(source),{name:fileName})
       }
     })
@@ -601,165 +619,221 @@ app.get('/download', function (req, res, next) {
 })
 
 app.get('/crop', function(req, res, next) {
-  var ept = req.query.ept;
-  const regex = /\/projects\/([^\/]*)\/tasks\/([^\/]*)\//;
-  var match = regex.exec(ept);
-  var bbox = req.query.bbox.split(',');
-  var polygon = req.query.polygon;
-  var outside = req.query.outside.toLowerCase()==="true";
-  var filename = req.query.filename ? req.query.filename.replace(/[/\\?%*:|"<>]/g, ' ').slice(0,256) : "cropped.laz";
-  if (filename.slice(filename.length-4).toLowerCase() !=".laz") {
-    filename = filename.slice(0,252);
-    filename+=".laz";
+  var regions = JSON.parse(req.query.regions);
+
+  var zipName = req.query.zipName ?? "exports.zip"
+  var zipName = zipName.replace(/[/\\?%*:|"<>]/g, ' ').slice(0,256);
+  if (zipName.slice(zipName.length-4).toLowerCase() !=".zip") {
+    zipName = zipName.slice(0,252);
+    zipName += ".zip";
   }
-  var metadata_req;
 
-  if (match && match.length>=2){
-    var project = match[1];
-    var task = match[2];
-    var headers = !!trustedServers.find(s=>ept.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null;
+  var promises = [];
+  var procs = [];
+  var info_procs = [];
+  var files = [];
+  var filesDirs=[];
 
-    var uuid = uuidv4();
-    var eptURL = new URL(ept);
-    var task_metadata = `${eptURL.origin}/api/projects/${project}/tasks/${task}/`;
-    var task_metadata_path = path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`);
-    var zipPath = path.join(os.tmpdir(), 'exports', project, task, uuid, filename.slice(0, filename.lastIndexOf('.')))+'.zip';
+  regions.map(r=>{
+    var ept = r.ept;
+    const regex = /\/projects\/([^\/]*)\/tasks\/([^\/]*)\//;
+    var match = regex.exec(ept);
+    var bbox = r.bbox;
+    var polygon = r.polygon;
+    var outside = r.outside;
+    var fileName = r.fileName ? r.fileName.replace(/[/\\?%*:|"<>]/g, ' ').slice(0,256) : "cropped.laz";
+    if (fileName.slice(fileName.length-4).toLowerCase() !=".laz") {
+      fileName = fileName.slice(0,252);
+      fileName+=".laz";
+    }
+    var metadata_req;
 
-    metadata_req = fetch(task_metadata,{headers:headers})
-      .then((response)=>response.text())
-      .then(text=>{
-        fs.writeFileSync(path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`), text);
+    if (match && match.length>=2){
+      var project = match[1];
+      var task = match[2];
+      var headers = !!trustedServers.find(s=>ept.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null;
+
+      var uuid = uuidv4();
+      var eptURL = new URL(ept);
+      var task_metadata = `${eptURL.origin}/api/projects/${project}/tasks/${task}/`;
+      var task_metadata_path = path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`);
+
+      metadata_req = fetch(task_metadata,{headers:headers})
+        .then((response)=>response.text())
+        .then(text=>{
+          fs.writeFileSync(path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`), text);
+        })
+    } else {
+      var project = "others";
+      var uuid = uuidv4();
+    }  
+
+    if (!fs.existsSync(path.join(os.tmpdir(), 'exports'))) {
+      fs.mkdirSync(path.join(os.tmpdir(), 'exports'));
+    }
+    if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project))) {
+      fs.mkdirSync(path.join(os.tmpdir(), 'exports', project));
+    }
+
+    var currentDate = new Date().toISOString().replace(/:/g,"-");
+
+    if (task){
+      if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task))) {
+        fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task));
+      }
+
+      if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task, uuid))) {
+        fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task, uuid));
+      }
+
+      var filePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, fileName)}`;
+      var pipelinePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `pipeline_${currentDate}.json`);
+      var infoPipelinePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `info_pipeline_${currentDate}.json`);
+      var infoFilePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `info_${fileName}.json`);
+      var filesDir = path.join(os.tmpdir(), 'exports', project, task, uuid);
+    } else {
+      if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, uuid))) {
+        fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, uuid));
+      }
+
+      var filePath = `${path.join(os.tmpdir(), 'exports', project, uuid, fileName)}`;
+      var pipelinePath = path.join(os.tmpdir(), 'exports', project, uuid, `pipeline_${currentDate}.json`);
+      var infoPipelinePath = path.join(os.tmpdir(), 'exports', project, uuid, `info_pipeline_${currentDate}.json`);
+      var infoFilePath = path.join(os.tmpdir(), 'exports', project, uuid, `info_${fileName}.json`);
+      var filesDir = path.join(os.tmpdir(), 'exports', project, uuid);
+    }
+    filesDirs.push(filesDir);
+    
+    if (!outside){
+      var pipeline= [
+        {
+          "type": "readers.ept",
+          "filename": ept,
+          "bounds":`([${bbox[0]},${bbox[1]}],[${bbox[2]},${bbox[3]}],[${bbox[4]},${bbox[5]}])/EPSG:4326`
+        },
+        {
+          "type": "filters.crop",
+          "polygon": `${polygon}/EPSG:4326`,
+          "a_srs": "EPSG:4326",
+        },
+        {
+          "type": "writers.las",
+          "filename": filePath
+        }
+      ]
+    } else {
+      var pipeline = [
+        {
+          "type": "readers.ept",
+          "filename": ept
+        },
+        {
+          "type": "filters.crop",
+          "polygon": `${polygon}/EPSG:4326`,
+          "where": `Z>=${bbox[4]} && Z<=${bbox[5]}`,
+          "a_srs": "EPSG:4326",
+          "outside": true
+        },
+        {
+          "type": "writers.las",
+          "filename": filePath
+        }
+      ]
+    }
+
+    var info_pipeline = [
+      {
+        "type": "readers.las",
+        "filename" : filePath
+      },
+      {
+        "type":"filters.info"
+      }
+    ]
+
+    if (headers) {
+      pipeline[0].header=headers;
+    }
+
+    fs.writeFileSync(pipelinePath, JSON.stringify(pipeline));
+    fs.writeFileSync(infoPipelinePath, JSON.stringify(info_pipeline));    
+    
+    var promise = new Promise((resolve, reject) => {
+      var proc = exec(`conda run -n entwine pdal pipeline "${pipelinePath}"`,(error, stdout, stderr)=>{
+        if (error) {
+          console.error(`exec error: ${error}`);
+          reject();
+          return;
+        }
+        console.log(`stdout: ${stdout}`);
+        console.error(`stderr: ${stderr}`);
+
+        var info_proc = exec(`conda run -n entwine pdal pipeline "${infoPipelinePath}" --metadata "${infoFilePath}"`,(error, stdout, stderr)=>{
+          if (error) {
+            console.error(`exec error: ${error}`);
+            reject();
+            return;
+          }
+          console.log(`stdout: ${stdout}`);
+          console.error(`stderr: ${stderr}`);
+
+          files.push(filePath);
+          files.push(infoFilePath);
+
+          if (metadata_req){
+            metadata_req.then(()=>{
+              files.push(task_metadata_path)
+              resolve();
+            })
+          } else {
+            resolve();
+          }
+        })
+        info_procs.push(info_proc);
       })
-  } else {
-    var project = "others";
-    var uuid = uuidv4();
-    var zipPath = path.join(os.tmpdir(), 'exports', project, uuid, filename.slice(0, filename.lastIndexOf('.')))+'.zip';
-  }  
-
-  if (!fs.existsSync(path.join(os.tmpdir(), 'exports'))) {
-    fs.mkdirSync(path.join(os.tmpdir(), 'exports'));
-  }
-  if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project))) {
-    fs.mkdirSync(path.join(os.tmpdir(), 'exports', project));
-  }
-
-  var currentDate = new Date().toISOString().replace(/:/g,"-");
-
-  if (task){
-    if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task))) {
-      fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task));
-    }
-
-    if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task, uuid))) {
-      fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task, uuid));
-    }
-
-    var filePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, filename)}`;
-    var pipelinePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `pipeline_${currentDate}.json`);
-    var infoPipelinePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `info_pipeline_${currentDate}.json`);
-    var infoFilePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `info_${filename}.json`);
-    var filesDir = path.join(os.tmpdir(), 'exports', project, task, uuid);
-  } else {
-    if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, uuid))) {
-      fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, uuid));
-    }
-
-    var filePath = `${path.join(os.tmpdir(), 'exports', project, uuid, filename)}`;
-    var pipelinePath = path.join(os.tmpdir(), 'exports', project, uuid, `pipeline_${currentDate}.json`);
-    var infoPipelinePath = path.join(os.tmpdir(), 'exports', project, uuid, `info_pipeline_${currentDate}.json`);
-    var infoFilePath = path.join(os.tmpdir(), 'exports', project, uuid, `info_${filename}.json`);
-    var filesDir = path.join(os.tmpdir(), 'exports', project, uuid);
-  }
-  
-  if (!outside){
-    var pipeline= [
-      {
-        "type": "readers.ept",
-        "filename": ept,
-        "bounds":`([${bbox[0]},${bbox[1]}],[${bbox[2]},${bbox[3]}],[${bbox[4]},${bbox[5]}])/EPSG:4326`
-      },
-      {
-        "type": "filters.crop",
-        "polygon": `${polygon}/EPSG:4326`,
-        "a_srs": "EPSG:4326",
-      },
-      {
-        "type": "writers.las",
-        "filename": filePath
-      }
-    ]
-  } else {
-    var pipeline = [
-      {
-        "type": "readers.ept",
-        "filename": ept
-      },
-      {
-        "type": "filters.crop",
-        "polygon": `${polygon}/EPSG:4326`,
-        "where": `Z>=${bbox[4]} && Z<=${bbox[5]}`,
-        "a_srs": "EPSG:4326",
-        "outside": true
-      },
-      {
-        "type": "writers.las",
-        "filename": filePath
-      }
-    ]
-  }
-
-  var info_pipeline = [
-    {
-      "type": "readers.las",
-      "filename" : filePath
-    },
-    {
-      "type":"filters.info"
-    }
-  ]
-
-  if (headers) {
-    pipeline[0].header=headers;
-  }
-
-  fs.writeFileSync(pipelinePath, JSON.stringify(pipeline));
-  fs.writeFileSync(infoPipelinePath, JSON.stringify(info_pipeline));
-  
-  var info_proc;
-  var proc = exec(`conda run -n entwine pdal pipeline "${pipelinePath}"`,(error, stdout, stderr)=>{
-    info_proc = exec(`conda run -n entwine pdal pipeline "${infoPipelinePath}" --metadata "${infoFilePath}"`,(error, stdout, stderr)=>{
-      var files = [filePath,infoFilePath];
-      if (metadata_req){
-        metadata_req.then(()=>{
-          files.push(task_metadata_path)
-          
-          zipFiles(files,zipPath).then(()=>{
-            res.download(zipPath, function(err){
-              if (fs.existsSync(filesDir)) {
-                fs.rmSync(filesDir, { recursive: true })
-              }
-            });
-          })
-        })
-      } else {
-        zipFiles(files,zipPath).then(()=>{
-          res.download(zipPath, function(err){
-            if (fs.existsSync(filesDir)) {
-              fs.rmSync(filesDir, { recursive: true })
-            }
-          });
-        })
-      }
+      procs.push(proc);
     })
+    promises.push(promise);
+  })
+
+  var project = "others";
+  var uuid = uuidv4();
+
+  if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, uuid))) {
+    fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, uuid));
+  }
+
+  var zipDir = path.join(os.tmpdir(), 'exports', project, uuid)
+  var zipPath = path.join(zipDir, zipName);
+  filesDirs.push(zipDir);
+
+  Promise.all(promises).then(()=>{
+    zipFiles(files,zipPath).then(()=>{
+      res.download(zipPath, function(err){
+        filesDirs.map(filesDir=>{
+          if (fs.existsSync(filesDir)) {
+            fs.rmSync(filesDir, { recursive: true })
+          }
+        })
+      });
+    })
+  }).catch(()=>{
+    res.status(500).send("An error occured during the export process");
   })
 
   req.on('close', function (err){
-    if (proc && proc.pid) kill(proc.pid);
-    if (info_proc && info_proc.pid) kill(info_proc.pid);
-    if (fs.existsSync(filesDir)) {
-      fs.rmSync(filesDir, { recursive: true })
-    }
- });
+    procs.map(proc=>{
+      if (proc && proc.pid) kill(proc.pid);
+    })
+    info_procs.map(info_proc=>{
+      if (info_proc &&  info_proc.pid) kill(info_proc.pid);
+    })
+    filesDirs.map(filesDir=>{
+      if (fs.existsSync(filesDir)) {
+        fs.rmSync(filesDir, { recursive: true })
+      }
+    })
+  });
 })
 
 app.get('/eptNumPoints', function(req, res, next) {

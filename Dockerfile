@@ -16,6 +16,6 @@ WORKDIR /app
 COPY . /app
 RUN npm install
 EXPOSE 8081
-CMD node api.js
+CMD node --max-http-header-size 16384 api.js
 
 

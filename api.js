@@ -635,7 +635,7 @@ app.get('/crop', function(req, res, next) {
   var filesDirs=[];
 
   regions.map(r=>{
-    var ept = r.ept;
+    var ept = r.ept.replace(/ /gi, "+");
     const regex = /\/projects\/([^\/]*)\/tasks\/([^\/]*)\//;
     var match = regex.exec(ept);
     var bbox = r.bbox;
@@ -777,9 +777,13 @@ app.get('/crop', function(req, res, next) {
           console.log(`stdout: ${stdout}`);
           console.error(`stderr: ${stderr}`);
 
-          files.push(filePath);
-          files.push(infoFilePath);
-
+          var data = fs.readFileSync(infoFilePath, {encoding:'utf8', flag:'r'});
+          data = JSON.parse(data);
+          var num_points = data.stages["filters.info"]["num_points"];
+          if (num_points>0){
+            files.push(filePath);
+            files.push(infoFilePath);
+          }
           if (metadata_req){
             metadata_req.then(()=>{
               files.push(task_metadata_path)

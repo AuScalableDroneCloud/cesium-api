@@ -803,6 +803,10 @@ app.get('/crop', function(req, res, next) {
   var project = "others";
   var uuid = uuidv4();
 
+  if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project))) {
+    fs.mkdirSync(path.join(os.tmpdir(), 'exports', project));
+  }
+
   if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, uuid))) {
     fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, uuid));
   }

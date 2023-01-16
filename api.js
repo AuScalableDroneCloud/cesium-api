@@ -635,34 +635,45 @@ app.get('/crop', function(req, res, next) {
   var filesDirs=[];
 
   regions.map(r=>{
-    var ept = r.ept.replace(/ /gi, "+");
+    var url = r.url.replace(/ /gi, "+");
     const regex = /\/projects\/([^\/]*)\/tasks\/([^\/]*)\//;
-    var match = regex.exec(ept);
+    var match = regex.exec(url);
     var bbox = r.bbox;
     var polygon = r.polygon;
     var outside = r.outside;
-    var fileName = r.fileName ? r.fileName.replace(/[/\\?%*:|"<>]/g, ' ').slice(0,256) : "cropped.laz";
-    if (fileName.slice(fileName.length-4).toLowerCase() !=".laz") {
-      fileName = fileName.slice(0,252);
-      fileName+=".laz";
+    var type = r.type;
+    if(type=="ept"){
+      var fileName = r.fileName ? r.fileName.replace(/[/\\?%*:|"<>]/g, ' ').slice(0,256) : "cropped.laz";
+      if (fileName.slice(fileName.length-4).toLowerCase() !=".laz") {
+        fileName = fileName.slice(0,252);
+        fileName+=".laz";
+      }
+    } else if (type=="imagery"){
+      var fileName = r.fileName ? r.fileName.replace(/[/\\?%*:|"<>]/g, ' ').slice(0,256) : "cropped.tif";
+      if (fileName.slice(fileName.length-4).toLowerCase() !=".tif") {
+        fileName = fileName.slice(0,252);
+        fileName+=".tif";
+      }
     }
     var metadata_req;
 
     if (match && match.length>=2){
       var project = match[1];
       var task = match[2];
-      var headers = !!trustedServers.find(s=>ept.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null;
-
+      var headers = !!trustedServers.find(s=>url.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null;
       var uuid = uuidv4();
-      var eptURL = new URL(ept);
-      var task_metadata = `${eptURL.origin}/api/projects/${project}/tasks/${task}/`;
-      var task_metadata_path = path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`);
 
-      metadata_req = fetch(task_metadata,{headers:headers})
-        .then((response)=>response.text())
-        .then(text=>{
-          fs.writeFileSync(path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`), text);
-        })
+      if (type=="ept"){
+        var eptURL = new URL(url);
+        var task_metadata = `${eptURL.origin}/api/projects/${project}/tasks/${task}/`;
+        var task_metadata_path = path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`);
+
+        metadata_req = fetch(task_metadata,{headers:headers})
+          .then((response)=>response.text())
+          .then(text=>{
+            fs.writeFileSync(path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`), text);
+          })
+      }
     } else {
       var project = "others";
       var uuid = uuidv4();
@@ -691,6 +702,12 @@ app.get('/crop', function(req, res, next) {
       var infoPipelinePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `info_pipeline_${currentDate}.json`);
       var infoFilePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `info_${fileName}.json`);
       var filesDir = path.join(os.tmpdir(), 'exports', project, task, uuid);
+
+      if (type=="imagery") {
+        var dlFilePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, 'input.tif')}`;
+        var polygonPath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, `polygon.csv`)}`;
+        var polygonShpPath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, `polygon.shp`)}`;
+      }
     } else {
       if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, uuid))) {
         fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, uuid));
@@ -701,74 +718,72 @@ app.get('/crop', function(req, res, next) {
       var infoPipelinePath = path.join(os.tmpdir(), 'exports', project, uuid, `info_pipeline_${currentDate}.json`);
       var infoFilePath = path.join(os.tmpdir(), 'exports', project, uuid, `info_${fileName}.json`);
       var filesDir = path.join(os.tmpdir(), 'exports', project, uuid);
+
+      if (type=="imagery") {
+        var dlFilePath = `${path.join(os.tmpdir(), 'exports', project, uuid, 'input.tif')}`;
+        var polygonPath = `${path.join(os.tmpdir(), 'exports', project, uuid, `polygon.csv`)}`;
+        var polygonShpPath = `${path.join(os.tmpdir(), 'exports', project, uuid, `polygon.shp`)}`;
+      }
     }
     filesDirs.push(filesDir);
     
-    if (!outside){
-      var pipeline= [
-        {
-          "type": "readers.ept",
-          "filename": ept,
-          "bounds":`([${bbox[0]},${bbox[1]}],[${bbox[2]},${bbox[3]}],[${bbox[4]},${bbox[5]}])/EPSG:4326`
-        },
-        {
-          "type": "filters.crop",
-          "polygon": `${polygon}/EPSG:4326`,
-          "a_srs": "EPSG:4326",
-        },
-        {
-          "type": "writers.las",
-          "filename": filePath
-        }
-      ]
-    } else {
-      var pipeline = [
-        {
-          "type": "readers.ept",
-          "filename": ept
-        },
-        {
-          "type": "filters.crop",
-          "polygon": `${polygon}/EPSG:4326`,
-          "where": `Z>=${bbox[4]} && Z<=${bbox[5]}`,
-          "a_srs": "EPSG:4326",
-          "outside": true
-        },
-        {
-          "type": "writers.las",
-          "filename": filePath
-        }
-      ]
-    }
-
-    var info_pipeline = [
-      {
-        "type": "readers.las",
-        "filename" : filePath
-      },
-      {
-        "type":"filters.info"
+    if (type==="ept"){
+      if (!outside){
+        var pipeline= [
+          {
+            "type": "readers.ept",
+            "filename": url,
+            "bounds":`([${bbox[0]},${bbox[1]}],[${bbox[2]},${bbox[3]}],[${bbox[4]},${bbox[5]}])/EPSG:4326`
+          },
+          {
+            "type": "filters.crop",
+            "polygon": `${polygon}/EPSG:4326`,
+            "a_srs": "EPSG:4326",
+          },
+          {
+            "type": "writers.las",
+            "filename": filePath
+          }
+        ]
+      } else {
+        var pipeline = [
+          {
+            "type": "readers.ept",
+            "filename": url
+          },
+          {
+            "type": "filters.crop",
+            "polygon": `${polygon}/EPSG:4326`,
+            "where": `Z>=${bbox[4]} && Z<=${bbox[5]}`,
+            "a_srs": "EPSG:4326",
+            "outside": true
+          },
+          {
+            "type": "writers.las",
+            "filename": filePath
+          }
+        ]
       }
-    ]
 
-    if (headers) {
-      pipeline[0].header=headers;
-    }
-
-    fs.writeFileSync(pipelinePath, JSON.stringify(pipeline));
-    fs.writeFileSync(infoPipelinePath, JSON.stringify(info_pipeline));    
-    
-    var promise = new Promise((resolve, reject) => {
-      var proc = exec(`conda run -n entwine pdal pipeline "${pipelinePath}"`,(error, stdout, stderr)=>{
-        if (error) {
-          console.error(`exec error: ${error}`);
-          reject();
-          return;
+      var info_pipeline = [
+        {
+          "type": "readers.las",
+          "filename" : filePath
+        },
+        {
+          "type":"filters.info"
         }
-        console.log(`stdout: ${stdout}`);
-        console.error(`stderr: ${stderr}`);
+      ]
 
-        var info_proc = exec(`conda run -n entwine pdal pipeline "${infoPipelinePath}" --metadata "${infoFilePath}"`,(error, stdout, stderr)=>{
+      if (headers) {
+        pipeline[0].header=headers;
+      }
+
+      fs.writeFileSync(pipelinePath, JSON.stringify(pipeline));
+      fs.writeFileSync(infoPipelinePath, JSON.stringify(info_pipeline));    
+      
+      var promise = new Promise((resolve, reject) => {
+        var proc = exec(`conda run -n entwine pdal pipeline "${pipelinePath}"`,(error, stdout, stderr)=>{
           if (error) {
             console.error(`exec error: ${error}`);
             reject();
@@ -777,27 +792,81 @@ app.get('/crop', function(req, res, next) {
           console.log(`stdout: ${stdout}`);
           console.error(`stderr: ${stderr}`);
 
-          var data = fs.readFileSync(infoFilePath, {encoding:'utf8', flag:'r'});
-          data = JSON.parse(data);
-          var num_points = data.stages["filters.info"]["num_points"];
-          if (num_points>0){
-            files.push(filePath);
-            files.push(infoFilePath);
-          }
-          if (metadata_req){
-            metadata_req.then(()=>{
-              files.push(task_metadata_path)
+          var info_proc = exec(`conda run -n entwine pdal pipeline "${infoPipelinePath}" --metadata "${infoFilePath}"`,(error, stdout, stderr)=>{
+            if (error) {
+              console.error(`exec error: ${error}`);
+              reject();
+              return;
+            }
+            console.log(`stdout: ${stdout}`);
+            console.error(`stderr: ${stderr}`);
+
+            var data = fs.readFileSync(infoFilePath, {encoding:'utf8', flag:'r'});
+            data = JSON.parse(data);
+            var num_points = data.stages["filters.info"]["num_points"];
+            if (num_points>0){
+              files.push(filePath);
+              files.push(infoFilePath);
+            }
+            if (metadata_req){
+              metadata_req.then(()=>{
+                files.push(task_metadata_path)
+                resolve();
+              })
+            } else {
               resolve();
-            })
-          } else {
-            resolve();
-          }
+            }
+          })
+          info_procs.push(info_proc);
         })
-        info_procs.push(info_proc);
+        procs.push(proc);
       })
-      procs.push(proc);
-    })
-    promises.push(promise);
+      promises.push(promise);
+    } else if (type=="imagery") {
+      fs.writeFileSync(polygonPath, 
+        `WKT,\n"${polygon}",`);
+  
+      execSync(`ogr2ogr -f "ESRI Shapefile" ${polygonShpPath} -dialect sqlite -sql "SELECT GeomFromText(WKT) FROM polygon" ${polygonPath} -a_srs EPSG:4326`);
+
+      if (!outside) {
+        var promise = new Promise((resolve, reject) => {
+          var proc = exec(`gdalwarp -cutline "${polygonPath}" -crop_to_cutline "/vsicurl?cookie=${req.headers.cookie}&url=${url}" "${filePath}"`,(error, stdout, stderr)=>{
+            if (error) {
+              if (error.message.includes("Range downloading not supported by this server")) {
+                var dlProc = exec(`curl ${url} --output ${dlFilePath} --header "cookie:${req.headers.cookie}"`,(error, stdout, stderr)=>{
+                  if (error) {
+                    console.error(`exec error: ${error}`);
+                  }
+                  console.log(`stdout: ${stdout}`);
+                  console.error(`stderr: ${stderr}`);
+                  
+                  var localProc = exec(`gdalwarp -cutline "${polygonPath}" -crop_to_cutline "${dlFilePath}" "${filePath}"`,(error, stdout, stderr)=>{
+                    if (error) {
+                      console.error(`exec error: ${error}`);
+                    }
+                    console.log(`stdout: ${stdout}`);
+                    console.error(`stderr: ${stderr}`);
+
+                    files.push(filePath);
+  
+                    resolve();
+                  })
+                  procs.push(localProc);
+  
+                })
+                procs.push(dlProc);
+              }
+            } else {
+              resolve();            
+            }
+            console.log(`stdout: ${stdout}`);
+            console.error(`stderr: ${stderr}`);
+          })
+          procs.push(proc);
+        })
+        promises.push(promise);
+      }
+    }
   })
 
   var project = "others";

@@ -826,11 +826,11 @@ app.get('/crop', function(req, res, next) {
       fs.writeFileSync(polygonPath, 
         `WKT,\n"${polygon}",`);
   
-      execSync(`ogr2ogr -f "ESRI Shapefile" ${polygonShpPath} -dialect sqlite -sql "SELECT GeomFromText(WKT) FROM polygon" ${polygonPath} -a_srs EPSG:4326`);
+      execSync(`conda run -n entwine ogr2ogr -f "ESRI Shapefile" ${polygonShpPath} -dialect sqlite -sql "SELECT GeomFromText(WKT) FROM polygon" ${polygonPath} -a_srs EPSG:4326`);
 
       if (!outside) {
         var promise = new Promise((resolve, reject) => {
-          var proc = exec(`gdalwarp -cutline "${polygonPath}" -crop_to_cutline "/vsicurl?cookie=${req.headers.cookie}&url=${url}" "${filePath}"`,(error, stdout, stderr)=>{
+          var proc = exec(`conda run -n entwine gdalwarp -cutline "${polygonPath}" -crop_to_cutline "/vsicurl?cookie=${req.headers.cookie}&url=${url}" "${filePath}"`,(error, stdout, stderr)=>{
             if (error) {
               if (error.message.includes("Range downloading not supported by this server")) {
                 var dlProc = exec(`curl ${url} --output ${dlFilePath} --header "cookie:${req.headers.cookie}"`,(error, stdout, stderr)=>{
@@ -840,7 +840,7 @@ app.get('/crop', function(req, res, next) {
                   console.log(`stdout: ${stdout}`);
                   console.error(`stderr: ${stderr}`);
                   
-                  var localProc = exec(`gdalwarp -cutline "${polygonPath}" -crop_to_cutline "${dlFilePath}" "${filePath}"`,(error, stdout, stderr)=>{
+                  var localProc = exec(`conda run -n entwine gdalwarp -cutline "${polygonPath}" -crop_to_cutline "${dlFilePath}" "${filePath}"`,(error, stdout, stderr)=>{
                     if (error) {
                       console.error(`exec error: ${error}`);
                     }

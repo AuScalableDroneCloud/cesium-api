@@ -620,8 +620,12 @@ app.get('/download', function (req, res, next) {
 
 app.get('/crop', function(req, res, next) {
   var regions = JSON.parse(req.query.regions);
-
-  var zipName = req.query.zipName ?? "exports.zip"
+  var zipName = req.query.zipName ?? `ASDC-Export-${
+    new Date().toLocaleDateString("en-au", {
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+    })}.zip`
   var zipName = zipName.replace(/[/\\?%*:|"<>]/g, ' ').slice(0,256);
   if (zipName.slice(zipName.length-4).toLowerCase() !=".zip") {
     zipName = zipName.slice(0,252);
@@ -663,17 +667,15 @@ app.get('/crop', function(req, res, next) {
       var headers = !!trustedServers.find(s=>url.startsWith(s)) && req.headers.cookie ? {'cookie' : req.headers.cookie}:null;
       var uuid = uuidv4();
 
-      if (type=="ept"){
-        var eptURL = new URL(url);
-        var task_metadata = `${eptURL.origin}/api/projects/${project}/tasks/${task}/`;
-        var task_metadata_path = path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`);
+      var URLobj = new URL(url);
+      var task_metadata = `${URLobj.origin}/api/projects/${project}/tasks/${task}/`;
+      var task_metadata_path = path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`);
 
-        metadata_req = fetch(task_metadata,{headers:headers})
-          .then((response)=>response.text())
-          .then(text=>{
-            fs.writeFileSync(path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`), text);
-          })
-      }
+      metadata_req = fetch(task_metadata,{headers:headers})
+        .then((response)=>response.text())
+        .then(text=>{
+          fs.writeFileSync(path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`), text);
+        })
     } else {
       var project = "others";
       var uuid = uuidv4();
@@ -849,15 +851,31 @@ app.get('/crop', function(req, res, next) {
 
                     files.push(filePath);
   
-                    resolve();
+                    if (metadata_req){
+                      metadata_req.then(()=>{
+                        files.push(task_metadata_path)
+                        resolve();
+                      })
+                    } else {
+                      resolve();
+                    }
                   })
                   procs.push(localProc);
   
                 })
                 procs.push(dlProc);
+              } else {
+                reject();
               }
             } else {
-              resolve();            
+              if (metadata_req){
+                metadata_req.then(()=>{
+                  files.push(task_metadata_path)
+                  resolve();
+                })
+              } else {
+                resolve();
+              }
             }
             console.log(`stdout: ${stdout}`);
             console.error(`stderr: ${stderr}`);

@@ -14,6 +14,7 @@ const { v4: uuidv4 } = require('uuid');
 const fetch = (...args) =>import('node-fetch').then(({ default: fetch }) => fetch(...args));
 const { AbortController } = require("node-abort-controller");
 const kill = require('tree-kill');
+const FormData = require('form-data');
 
 // app.use(compression());
 app.use(function (req, res, next) {
@@ -454,7 +455,7 @@ function processFileForDownload(sourcePath, inputFileName, outputFileName, heade
   })
 }
 
-function zipFiles(sources, outputFile, remoteFiles) {
+function zipFiles(sources, outputFile, remoteFiles, directories) {
   const archive = archiver('zip');
   archive.on('error', error => { throw new Error(`${error.name} ${error.code} ${error.message} ${error.path} ${error.stack}`); });
   const file = fs.createWriteStream(outputFile);
@@ -474,6 +475,10 @@ function zipFiles(sources, outputFile, remoteFiles) {
       } else {
         fileNames.push(fn)
       }
+    })
+
+    directories.map(dir=>{
+      archive.directory(dir, dir.slice(dir.lastIndexOf('/') + 1, dir.length));
     })
   }
 
@@ -620,6 +625,17 @@ app.get('/download', function (req, res, next) {
 
 app.get('/crop', function(req, res, next) {
   var regions = JSON.parse(req.query.regions);
+
+  var importToWebODM = req.query.importToWebODM == "true";
+
+  var taskName = req.query.taskName ?? `ASDC-Export-${
+    new Date().toLocaleDateString("en-au", {
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+    })}`;
+
+
   var zipName = req.query.zipName ?? `ASDC-Export-${
     new Date().toLocaleDateString("en-au", {
       year: "numeric",
@@ -632,11 +648,16 @@ app.get('/crop', function(req, res, next) {
     zipName += ".zip";
   }
 
+  res.setHeader("Access-Control-Allow-Credentials", true);
+
   var promises = [];
   var procs = [];
   var info_procs = [];
   var files = [];
   var filesDirs=[];
+  var directories = [];
+
+  var importURL = req.query.importURL;
 
   regions.map(r=>{
     var url = r.url.replace(/ /gi, "+");
@@ -646,6 +667,7 @@ app.get('/crop', function(req, res, next) {
     var polygon = r.polygon;
     var outside = r.outside;
     var type = r.type;
+    var imageryType = r.imageryType;
     if(type=="ept"){
       var fileName = r.fileName ? r.fileName.replace(/[/\\?%*:|"<>]/g, ' ').slice(0,256) : "cropped.laz";
       if (fileName.slice(fileName.length-4).toLowerCase() !=".laz") {
@@ -671,11 +693,16 @@ app.get('/crop', function(req, res, next) {
       var task_metadata = `${URLobj.origin}/api/projects/${project}/tasks/${task}/`;
       var task_metadata_path = path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`);
 
-      metadata_req = fetch(task_metadata,{headers:headers})
-        .then((response)=>response.text())
-        .then(text=>{
-          fs.writeFileSync(path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`), text);
-        })
+      if(!importURL){
+        importURL = `${URLobj.origin}/api/projects/${project}/tasks/import`;
+      }
+      if (!importToWebODM) {
+        metadata_req = fetch(task_metadata,{headers:headers})
+          .then((response)=>response.text())
+          .then(text=>{
+            fs.writeFileSync(path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`), text);
+          })
+      }
     } else {
       var project = "others";
       var uuid = uuidv4();
@@ -698,8 +725,34 @@ app.get('/crop', function(req, res, next) {
       if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task, uuid))) {
         fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task, uuid));
       }
+      if (importToWebODM) {
+        if (type=="ept"){
+          if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task, uuid, "georeferenced_model"))) {
+            fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task, uuid, "georeferenced_model"));
+          }
+          var filePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, "georeferenced_model", "georeferenced_model.laz")}`;
 
-      var filePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, fileName)}`;
+        }
+        
+        if (type=="imagery") {
+          if (imageryType.toLowerCase()=="orthophoto"){
+            var dir = "odm_orthophoto";
+            var file = `${dir}.tif`;
+          } else if (imageryType.toLowerCase()=="dsm"){
+            var dir = "odm_dem";
+            var file = "odm_dsm.tif";
+          } else {
+
+          }
+          if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task, uuid, dir))) {
+            fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task, uuid, dir));
+          }
+          var fileDir=path.join(os.tmpdir(), 'exports', project, task, uuid, dir);
+          var filePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, dir, file)}`;
+        }
+      } else {
+        var filePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, fileName)}`;
+      }
       var pipelinePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `pipeline_${currentDate}.json`);
       var infoPipelinePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `info_pipeline_${currentDate}.json`);
       var infoFilePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `info_${fileName}.json`);
@@ -709,6 +762,10 @@ app.get('/crop', function(req, res, next) {
         var dlFilePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, 'input.tif')}`;
         var polygonPath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, `polygon.csv`)}`;
         var polygonShpPath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, `polygon.shp`)}`;
+      }
+
+      if (importToWebODM) {
+        var eptPath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, "entwine_pointcloud")}`;
       }
     } else {
       if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, uuid))) {
@@ -794,32 +851,50 @@ app.get('/crop', function(req, res, next) {
           console.log(`stdout: ${stdout}`);
           console.error(`stderr: ${stderr}`);
 
-          var info_proc = exec(`conda run -n entwine pdal pipeline "${infoPipelinePath}" --metadata "${infoFilePath}"`,(error, stdout, stderr)=>{
-            if (error) {
-              console.error(`exec error: ${error}`);
-              reject();
-              return;
-            }
-            console.log(`stdout: ${stdout}`);
-            console.error(`stderr: ${stderr}`);
+          if (!importToWebODM) {
+            var info_proc = exec(`conda run -n entwine pdal pipeline "${infoPipelinePath}" --metadata "${infoFilePath}"`,(error, stdout, stderr)=>{
+              if (error) {
+                console.error(`exec error: ${error}`);
+                reject();
+                return;
+              }
+              console.log(`stdout: ${stdout}`);
+              console.error(`stderr: ${stderr}`);
 
-            var data = fs.readFileSync(infoFilePath, {encoding:'utf8', flag:'r'});
-            data = JSON.parse(data);
-            var num_points = data.stages["filters.info"]["num_points"];
-            if (num_points>0){
-              files.push(filePath);
-              files.push(infoFilePath);
-            }
-            if (metadata_req){
-              metadata_req.then(()=>{
-                files.push(task_metadata_path)
+              var data = fs.readFileSync(infoFilePath, {encoding:'utf8', flag:'r'});
+              data = JSON.parse(data);
+              var num_points = data.stages["filters.info"]["num_points"];
+              if (num_points>0){
+                files.push(filePath);
+                files.push(infoFilePath);
+              }
+              if (metadata_req){
+                metadata_req.then(()=>{
+                  files.push(task_metadata_path)
+                  resolve();
+                })
+              } else {
                 resolve();
-              })
-            } else {
+              }
+            })
+            info_procs.push(info_proc);
+          } else {
+            var eptProc = exec(`conda run -n entwine entwine build -i "${filePath}" -o "${eptPath}"`,(error, stdout, stderr)=>{
+              if (error) {
+                console.error(`exec error: ${error}`);
+                reject();
+                return;
+              }
+              console.log(`stdout: ${stdout}`);
+              console.error(`stderr: ${stderr}`);
+
+              directories.push(eptPath);
+
               resolve();
-            }
-          })
-          info_procs.push(info_proc);
+            })
+
+            procs.push(eptProc);
+          }
         })
         procs.push(proc);
       })
@@ -832,7 +907,7 @@ app.get('/crop', function(req, res, next) {
 
       if (!outside) {
         var promise = new Promise((resolve, reject) => {
-          var proc = exec(`conda run -n entwine gdalwarp -cutline "${polygonPath}" -crop_to_cutline "/vsicurl?cookie=${req.headers.cookie}&url=${url}" "${filePath}"`,(error, stdout, stderr)=>{
+          var proc = exec(`conda run -n entwine gdalwarp -cutline "${polygonPath}" -crop_to_cutline "/vsicurl?${req.headers.cookie ? `cookie=${req.headers.cookie}&`:""}url=${url}" "${filePath}"`,(error, stdout, stderr)=>{
             if (error) {
               if (error.message.includes("Range downloading not supported by this server")) {
                 var dlProc = exec(`curl ${url} --output ${dlFilePath} --header "cookie:${req.headers.cookie}"`,(error, stdout, stderr)=>{
@@ -849,14 +924,20 @@ app.get('/crop', function(req, res, next) {
                     console.log(`stdout: ${stdout}`);
                     console.error(`stderr: ${stderr}`);
 
-                    files.push(filePath);
-  
-                    if (metadata_req){
-                      metadata_req.then(()=>{
-                        files.push(task_metadata_path)
+                    if (!importToWebODM) {
+                      files.push(filePath);
+    
+                      if (metadata_req){
+                        metadata_req.then(()=>{
+                          files.push(task_metadata_path)
+                          resolve();
+                        })
+                      } else {
                         resolve();
-                      })
+                      }
                     } else {
+                      directories.push(fileDir);
+                      
                       resolve();
                     }
                   })
@@ -903,15 +984,85 @@ app.get('/crop', function(req, res, next) {
   filesDirs.push(zipDir);
 
   Promise.all(promises).then(()=>{
-    zipFiles(files,zipPath).then(()=>{
-      res.download(zipPath, function(err){
-        filesDirs.map(filesDir=>{
-          if (fs.existsSync(filesDir)) {
-            fs.rmSync(filesDir, { recursive: true })
+      zipFiles(files, zipPath, false, directories).then(() => {
+        if (!importToWebODM) {
+          res.download(zipPath, function (err) {
+            filesDirs.map(filesDir => {
+              if (fs.existsSync(filesDir)) {
+                fs.rmSync(filesDir, { recursive: true })
+              }
+            })
+          });
+        } else {
+          const form = new FormData();
+          const buffer = fs.createReadStream(zipPath);
+          const fileName = zipPath;
+          form.append('name',taskName)
+          form.append('file', buffer, {
+            contentType: 'application/zip',
+            name: 'file',
+            filename: fileName,
+          });
+
+          var fetchHeaders = {
+            "accept": "application/json",
+            "cache-control": "no-cache",
+            'Content-Type': `multipart/form-data;boundary=${form._boundary}`,
+            "x-requested-with": "XMLHttpRequest",
+            "Referer": importURL,
           }
-        })
-      });
-    })
+
+          if (!!trustedServers.find(s=>importURL.startsWith(s)) && req.headers.cookie) {
+            var parsedCookies = req.headers.cookie
+              .split(";")
+              .map((v) => v.split("="))
+              .reduce((acc, v) => {
+                if (v[0] && v[1]) {
+                  acc[decodeURIComponent(v[0].trim())] = decodeURIComponent(
+                    v[1].trim()
+                  );
+                }
+                return acc;
+              }, {});
+
+              fetchHeaders["x-csrftoken"] = parsedCookies.csrftoken;
+              fetchHeaders["cookie"] = req.headers.cookie;
+          }
+
+          fetch(importURL, {
+            "headers": fetchHeaders,
+            body:form,
+            "method": "POST"
+          })
+          .then((resp)=>{
+            if (resp.status==201){
+              res.sendStatus(201);
+              filesDirs.map(filesDir => {
+                if (fs.existsSync(filesDir)) {
+                  fs.rmSync(filesDir, { recursive: true })
+                }
+              })
+            } else {
+              res.download(zipPath, function (err) {
+                filesDirs.map(filesDir => {
+                  if (fs.existsSync(filesDir)) {
+                    fs.rmSync(filesDir, { recursive: true })
+                  }
+                })
+              });
+            }
+          })
+          .catch(e=>{
+            res.download(zipPath, function (err) {
+              filesDirs.map(filesDir => {
+                if (fs.existsSync(filesDir)) {
+                  fs.rmSync(filesDir, { recursive: true })
+                }
+              })
+            });
+          })
+        }
+      })
   }).catch(()=>{
     res.status(500).send("An error occured during the export process");
   })

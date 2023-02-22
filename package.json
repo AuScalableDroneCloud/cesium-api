@@ -8,6 +8,7 @@
     "aws-sdk": "^2.1041.0",
     "cesium": "^1.88.0",
     "express": "^4.17.1",
+    "form-data": "^4.0.0",
     "formidable": "^2.0.1",
     "node-abort-controller": "^3.0.1",
     "node-fetch": "^3.2.10",

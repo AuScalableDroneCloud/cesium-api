@@ -740,15 +740,15 @@ app.get('/crop', function(req, res, next) {
             var file = `${dir}.tif`;
           } else if (imageryType.toLowerCase()=="dsm"){
             var dir = "odm_dem";
-            var file = "odm_dsm.tif";
-          } else {
-
+            var file = "dsm.tif";
           }
           if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task, uuid, dir))) {
             fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task, uuid, dir));
           }
           var fileDir=path.join(os.tmpdir(), 'exports', project, task, uuid, dir);
           var filePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, dir, file)}`;
+
+          var polygonGeoJSONPath = path.join(os.tmpdir(), 'exports', project, task, uuid, `crop.bounds.geojson`);
         }
       } else {
         var filePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, fileName)}`;
@@ -779,9 +779,9 @@ app.get('/crop', function(req, res, next) {
       var filesDir = path.join(os.tmpdir(), 'exports', project, uuid);
 
       if (type=="imagery") {
-        var dlFilePath = `${path.join(os.tmpdir(), 'exports', project, uuid, 'input.tif')}`;
-        var polygonPath = `${path.join(os.tmpdir(), 'exports', project, uuid, `polygon.csv`)}`;
-        var polygonShpPath = `${path.join(os.tmpdir(), 'exports', project, uuid, `polygon.shp`)}`;
+        var dlFilePath = path.join(os.tmpdir(), 'exports', project, uuid, 'input.tif');
+        var polygonPath = path.join(os.tmpdir(), 'exports', project, uuid, `polygon.csv`);
+        var polygonShpPath = path.join(os.tmpdir(), 'exports', project, uuid, `polygon.shp`);
       }
     }
     filesDirs.push(filesDir);
@@ -905,6 +905,10 @@ app.get('/crop', function(req, res, next) {
   
       execSync(`conda run -n entwine ogr2ogr -f "ESRI Shapefile" ${polygonShpPath} -dialect sqlite -sql "SELECT GeomFromText(WKT) FROM polygon" ${polygonPath} -a_srs EPSG:4326`);
 
+      if (!files.find(f=>f.endsWith("crop.bounds.geojson"))) {
+        execSync(`conda run -n entwine ogr2ogr -f GeoJSON ${polygonGeoJSONPath} -dialect sqlite -sql "SELECT GeomFromText(WKT) FROM polygon" ${polygonPath} -a_srs EPSG:4326`);
+        files.push(polygonGeoJSONPath);
+      }
       if (!outside) {
         var promise = new Promise((resolve, reject) => {
           var proc = exec(`conda run -n entwine gdalwarp -cutline "${polygonPath}" -crop_to_cutline "/vsicurl?${req.headers.cookie ? `cookie=${req.headers.cookie}&`:""}url=${url}" "${filePath}"`,(error, stdout, stderr)=>{

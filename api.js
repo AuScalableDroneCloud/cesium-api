@@ -642,7 +642,10 @@ app.get('/crop', function(req, res, next) {
       month: "numeric",
       day: "numeric",
     })}.zip`
-  var zipName = zipName.replace(/[/\\?%*:|"<>]/g, ' ').slice(0,256);
+    .replace(/[/\\?%*:|"<>]/g, ' ')
+    .slice(0,256)
+    .trim();
+
   if (zipName.slice(zipName.length-4).toLowerCase() !=".zip") {
     zipName = zipName.slice(0,252);
     zipName += ".zip";
@@ -725,6 +728,8 @@ app.get('/crop', function(req, res, next) {
       if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task, uuid))) {
         fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task, uuid));
       }
+      var polygonGeoJSONPath = path.join(os.tmpdir(), 'exports', project, task, uuid, `crop.bounds.geojson`);
+
       if (importToWebODM) {
         if (type=="ept"){
           if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task, uuid, "georeferenced_model"))) {
@@ -747,8 +752,6 @@ app.get('/crop', function(req, res, next) {
           }
           var fileDir=path.join(os.tmpdir(), 'exports', project, task, uuid, dir);
           var filePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, dir, file)}`;
-
-          var polygonGeoJSONPath = path.join(os.tmpdir(), 'exports', project, task, uuid, `crop.bounds.geojson`);
         }
       } else {
         var filePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, fileName)}`;
@@ -783,6 +786,8 @@ app.get('/crop', function(req, res, next) {
         var polygonPath = path.join(os.tmpdir(), 'exports', project, uuid, `polygon.csv`);
         var polygonShpPath = path.join(os.tmpdir(), 'exports', project, uuid, `polygon.shp`);
       }
+
+      var polygonGeoJSONPath = path.join(os.tmpdir(), 'exports', project, uuid, `crop.bounds.geojson`);
     }
     filesDirs.push(filesDir);
     
@@ -917,6 +922,7 @@ app.get('/crop', function(req, res, next) {
                 var dlProc = exec(`curl ${url} --output ${dlFilePath} --header "cookie:${req.headers.cookie}"`,(error, stdout, stderr)=>{
                   if (error) {
                     console.error(`exec error: ${error}`);
+                    reject();
                   }
                   console.log(`stdout: ${stdout}`);
                   console.error(`stderr: ${stderr}`);
@@ -1067,7 +1073,8 @@ app.get('/crop', function(req, res, next) {
           })
         }
       })
-  }).catch(()=>{
+  }).catch((e)=>{
+    console.log(e)
     res.status(500).send("An error occured during the export process");
   })
 

@@ -765,9 +765,10 @@ app.get('/crop', function(req, res, next) {
       var infoFilePath = path.join(os.tmpdir(), 'exports', project, task, uuid, `info_${fileName}.json`);
       var filesDir = path.join(os.tmpdir(), 'exports', project, task, uuid);
 
+      var polygonPath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, `polygon.csv`)}`;
+
       if (type=="imagery") {
         var dlFilePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, 'input.tif')}`;
-        var polygonPath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, `polygon.csv`)}`;
         var polygonShpPath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, `polygon.shp`)}`;
       }
 
@@ -785,15 +786,24 @@ app.get('/crop', function(req, res, next) {
       var infoFilePath = path.join(os.tmpdir(), 'exports', project, uuid, `info_${fileName}.json`);
       var filesDir = path.join(os.tmpdir(), 'exports', project, uuid);
 
+      var polygonPath = path.join(os.tmpdir(), 'exports', project, uuid, `polygon.csv`);
+
       if (type=="imagery") {
         var dlFilePath = path.join(os.tmpdir(), 'exports', project, uuid, 'input.tif');
-        var polygonPath = path.join(os.tmpdir(), 'exports', project, uuid, `polygon.csv`);
         var polygonShpPath = path.join(os.tmpdir(), 'exports', project, uuid, `polygon.shp`);
       }
 
       var polygonGeoJSONPath = path.join(os.tmpdir(), 'exports', project, uuid, `crop.bounds.geojson`);
     }
     filesDirs.push(filesDir);
+
+    fs.writeFileSync(polygonPath, 
+      `WKT,\n"${polygon}",`);
+
+    if (!files.find(f=>f.endsWith("crop.bounds.geojson"))) {
+      execSync(`conda run -n entwine ogr2ogr -f GeoJSON ${polygonGeoJSONPath} -dialect sqlite -sql "SELECT GeomFromText(WKT) FROM polygon" ${polygonPath} -a_srs EPSG:4326`);
+      files.push(polygonGeoJSONPath);
+    }
     
     if (type==="ept"){
       if (!outside){
@@ -909,15 +919,9 @@ app.get('/crop', function(req, res, next) {
       })
       promises.push(promise);
     } else if (type=="imagery") {
-      fs.writeFileSync(polygonPath, 
-        `WKT,\n"${polygon}",`);
   
       execSync(`conda run -n entwine ogr2ogr -f "ESRI Shapefile" ${polygonShpPath} -dialect sqlite -sql "SELECT GeomFromText(WKT) FROM polygon" ${polygonPath} -a_srs EPSG:4326`);
 
-      if (!files.find(f=>f.endsWith("crop.bounds.geojson"))) {
-        execSync(`conda run -n entwine ogr2ogr -f GeoJSON ${polygonGeoJSONPath} -dialect sqlite -sql "SELECT GeomFromText(WKT) FROM polygon" ${polygonPath} -a_srs EPSG:4326`);
-        files.push(polygonGeoJSONPath);
-      }
       if (!outside) {
         var promise = new Promise((resolve, reject) => {
           var proc = exec(`conda run -n entwine gdalwarp -cutline "${polygonPath}" -crop_to_cutline "/vsicurl?${req.headers.cookie ? `cookie=${req.headers.cookie}&`:""}url=${url}" "${filePath}"`,(error, stdout, stderr)=>{

@@ -703,7 +703,10 @@ app.get('/crop', function(req, res, next) {
         metadata_req = fetch(task_metadata,{headers:headers})
           .then((response)=>response.text())
           .then(text=>{
-            fs.writeFileSync(path.join(os.tmpdir(), 'exports', project, task, uuid, `task_metadata_${task}.json`), text);
+            fs.writeFileSync(task_metadata_path, text);
+          })
+          .catch(e=>{
+            console.log(e);
           })
       }
     } else {
@@ -732,11 +735,12 @@ app.get('/crop', function(req, res, next) {
 
       if (importToWebODM) {
         if (type=="ept"){
-          if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task, uuid, "georeferenced_model"))) {
-            fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task, uuid, "georeferenced_model"));
+          var modelDir = path.join(os.tmpdir(), 'exports', project, task, uuid, "odm_georeferencing");
+          if (!fs.existsSync(modelDir)) {
+            fs.mkdirSync(modelDir);
           }
-          var filePath = `${path.join(os.tmpdir(), 'exports', project, task, uuid, "georeferenced_model", "georeferenced_model.laz")}`;
-
+          directories.push(modelDir);
+          var filePath = `${path.join(modelDir, "odm_georeferenced_model.laz")}`;
         }
         
         if (type=="imagery") {

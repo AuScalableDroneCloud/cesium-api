@@ -627,6 +627,7 @@ app.get('/crop', function(req, res, next) {
   var regions = JSON.parse(req.query.regions);
 
   var importToWebODM = req.query.importToWebODM == "true";
+  var saveForWebODM = req.query.saveForWebODM == "true";
 
   var taskName = req.query.taskName ?? `ASDC-Export-${
     new Date().toLocaleDateString("en-au", {
@@ -1012,65 +1013,7 @@ app.get('/crop', function(req, res, next) {
             })
           });
         } else {
-          const form = new FormData();
-          const buffer = fs.createReadStream(zipPath);
-          const fileName = zipPath;
-          form.append('name',taskName)
-          form.append('file', buffer, {
-            contentType: 'application/zip',
-            name: 'file',
-            filename: fileName,
-          });
-
-          var fetchHeaders = {
-            "accept": "application/json",
-            "cache-control": "no-cache",
-            'Content-Type': `multipart/form-data;boundary=${form._boundary}`,
-            "x-requested-with": "XMLHttpRequest",
-            "Referer": importURL,
-          }
-
-          if (!!trustedServers.find(s=>importURL.startsWith(s)) && req.headers.cookie) {
-            var parsedCookies = req.headers.cookie
-              .split(";")
-              .map((v) => v.split("="))
-              .reduce((acc, v) => {
-                if (v[0] && v[1]) {
-                  acc[decodeURIComponent(v[0].trim())] = decodeURIComponent(
-                    v[1].trim()
-                  );
-                }
-                return acc;
-              }, {});
-
-              fetchHeaders["x-csrftoken"] = parsedCookies.csrftoken;
-              fetchHeaders["cookie"] = req.headers.cookie;
-          }
-
-          fetch(importURL, {
-            "headers": fetchHeaders,
-            body:form,
-            "method": "POST"
-          })
-          .then((resp)=>{
-            if (resp.status==201){
-              res.sendStatus(201);
-              filesDirs.map(filesDir => {
-                if (fs.existsSync(filesDir)) {
-                  fs.rmSync(filesDir, { recursive: true })
-                }
-              })
-            } else {
-              res.download(zipPath, function (err) {
-                filesDirs.map(filesDir => {
-                  if (fs.existsSync(filesDir)) {
-                    fs.rmSync(filesDir, { recursive: true })
-                  }
-                })
-              });
-            }
-          })
-          .catch(e=>{
+          if (saveForWebODM) {
             res.download(zipPath, function (err) {
               filesDirs.map(filesDir => {
                 if (fs.existsSync(filesDir)) {
@@ -1078,8 +1021,76 @@ app.get('/crop', function(req, res, next) {
                 }
               })
             });
-          })
-        }
+          } else {
+            const form = new FormData();
+            const buffer = fs.createReadStream(zipPath);
+            const fileName = zipPath;
+            form.append('name',taskName)
+            form.append('file', buffer, {
+              contentType: 'application/zip',
+              name: 'file',
+              filename: fileName,
+            });
+
+            var fetchHeaders = {
+              "accept": "application/json",
+              "cache-control": "no-cache",
+              'Content-Type': `multipart/form-data;boundary=${form._boundary}`,
+              "x-requested-with": "XMLHttpRequest",
+              "Referer": importURL,
+            }
+
+            if (!!trustedServers.find(s=>importURL.startsWith(s)) && req.headers.cookie) {
+              var parsedCookies = req.headers.cookie
+                .split(";")
+                .map((v) => v.split("="))
+                .reduce((acc, v) => {
+                  if (v[0] && v[1]) {
+                    acc[decodeURIComponent(v[0].trim())] = decodeURIComponent(
+                      v[1].trim()
+                    );
+                  }
+                  return acc;
+                }, {});
+
+                fetchHeaders["x-csrftoken"] = parsedCookies.csrftoken;
+                fetchHeaders["cookie"] = req.headers.cookie;
+            }
+
+            fetch(importURL, {
+              "headers": fetchHeaders,
+              body:form,
+              "method": "POST"
+            })
+            .then((resp)=>{
+              if (resp.status==201){
+                res.sendStatus(201);
+                filesDirs.map(filesDir => {
+                  if (fs.existsSync(filesDir)) {
+                    fs.rmSync(filesDir, { recursive: true })
+                  }
+                })
+              } else {
+                res.download(zipPath, function (err) {
+                  filesDirs.map(filesDir => {
+                    if (fs.existsSync(filesDir)) {
+                      fs.rmSync(filesDir, { recursive: true })
+                    }
+                  })
+                });
+              }
+            })
+            .catch(e=>{
+              res.download(zipPath, function (err) {
+                filesDirs.map(filesDir => {
+                  if (fs.existsSync(filesDir)) {
+                    fs.rmSync(filesDir, { recursive: true })
+                  }
+                })
+              });
+            })
+          }
+        }      
       })
   }).catch((e)=>{
     console.log(e)

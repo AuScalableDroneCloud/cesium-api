@@ -1,4 +1,5 @@
-FROM conda/miniconda3
+# FROM --platform=linux/amd64 conda/miniconda3
+FROM continuumio/miniconda3
 ENV DEBIAN_FRONTEND=noninteractive 
 
 RUN conda create -n entwine -c conda-forge entwine pdal python-pdal gdal

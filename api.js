@@ -1240,6 +1240,31 @@ app.get('/eptFileSize', function(req, res, next) {
   }); 
 })
 
+app.get('/wkt2geojson', function(req, res, next) {
+  wkt=req.query.wkt;
+
+  var uuid = uuidv4();
+  if (!fs.existsSync(path.join(os.tmpdir(), 'exports'))) {
+    fs.mkdirSync(path.join(os.tmpdir(), 'exports'));
+  }
+  if (!fs.existsSync(path.join(os.tmpdir(), 'exports', uuid))) {
+    fs.mkdirSync(path.join(os.tmpdir(), 'exports', uuid));
+  }
+  var polygonPath = `${path.join(os.tmpdir(), 'exports', uuid, `polygon.csv`)}`;
+  var polygonGeoJSONPath = `${path.join(os.tmpdir(), 'exports', uuid, `polygon.geojson`)}`;
+
+  fs.writeFileSync(polygonPath, 
+    `WKT,\n"${wkt}",`);
+
+  execSync(`conda run -n entwine ogr2ogr -f GeoJSON ${polygonGeoJSONPath} -dialect sqlite -sql "SELECT GeomFromText(WKT) FROM polygon" ${polygonPath} -a_srs EPSG:4326`);
+  
+  res.download(polygonGeoJSONPath, function (err) {
+    if (fs.existsSync(`${path.join(os.tmpdir(), 'exports', uuid)}`)) {
+      fs.rmSync(`${path.join(os.tmpdir(), 'exports', uuid)}`, { recursive: true })
+    }
+  });
+})
+
 app.get('/test', function (req, res, next) {
   res.send('test');
 })

@@ -663,7 +663,7 @@ app.get('/crop', function(req, res, next) {
 
   var importURL = req.query.importURL;
 
-  regions.map(r=>{
+  regions.map((r,ri)=>{
     var url = r.url.replace(/ /gi, "+");
     const regex = /\/projects\/([^\/]*)\/tasks\/([^\/]*)\//;
     var match = regex.exec(url);
@@ -700,7 +700,7 @@ app.get('/crop', function(req, res, next) {
       if(!importURL){
         importURL = `${URLobj.origin}/api/projects/${project}/tasks/import`;
       }
-      if (!importToWebODM) {
+      if (!importToWebODM && ri==0) {
         metadata_req = fetch(task_metadata,{headers:headers})
           .then((response)=>response.text())
           .then(text=>{

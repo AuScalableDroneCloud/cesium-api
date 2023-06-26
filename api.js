@@ -751,6 +751,9 @@ app.get('/crop', function(req, res, next) {
           } else if (imageryType.toLowerCase()=="dsm"){
             var dir = "odm_dem";
             var file = "dsm.tif";
+          } else if (imageryType.toLowerCase()=="dtm"){
+            var dir = "odm_dem";
+            var file = "dtm.tif";
           }
           if (!fs.existsSync(path.join(os.tmpdir(), 'exports', project, task, uuid, dir))) {
             fs.mkdirSync(path.join(os.tmpdir(), 'exports', project, task, uuid, dir));

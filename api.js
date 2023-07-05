@@ -815,7 +815,7 @@ app.get('/crop', function(req, res, next) {
           {
             "type": "readers.ept",
             "filename": url,
-            "bounds":`([${bbox[0]},${bbox[1]}],[${bbox[2]},${bbox[3]}],[${bbox[4]},${bbox[5]}])`
+            // "bounds":`([${bbox[0]},${bbox[1]}],[${bbox[2]},${bbox[3]}],[${bbox[4]},${bbox[5]}])`
           },
           {
             "type": "filters.crop",
@@ -1133,7 +1133,7 @@ app.get('/eptNumPoints', function(req, res, next) {
     {
       "type": "readers.ept",
       "filename": ept,
-      "bounds": `([${bbox[0]},${bbox[1]}],[${bbox[2]},${bbox[3]}],[${bbox[4]},${bbox[5]}])`,
+      // "bounds": `([${bbox[0]},${bbox[1]}],[${bbox[2]},${bbox[3]}],[${bbox[4]},${bbox[5]}])`,
       // "polygon": `${polygon}/EPSG:4326`  //wrong results
     },
     {
